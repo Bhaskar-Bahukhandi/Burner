@@ -2,7 +2,7 @@
 
 EduTrack is a console-based student record and academic performance program developed for the third-semester PBL subjects TCS-302 (Data Structures with C) and TCS-307 (OOP with C++).
 
-**Phase-II, Part 4:** student records, searching, sorting, ranking, undo, queued requests, academic reports and file save/load are implemented. Final integration review and presentation checks are still pending.
+**Phase-II, Part 5:** the four functional modules are integrated. The integration review covers console workflows, reports, record persistence and safe recovery checks. Final handover, Windows-specific verification and team review are still pending.
 
 ## Build
 
@@ -43,7 +43,7 @@ Every subject currently has equal weight and is marked out of 100. Therefore **p
 
 The four performance categories are **Excellent** (85 and above), **Good** (70–below 85), **Average** (50–below 70), and **Needs Improvement** (below 50). These cutoffs are project rules and can be changed if the mentor specifies different ones.
 
-Class average is the average of each student's percentage, so students with different numbers of subjects are weighted equally. Subject-wise averages use only the students who have a mark at that subject position. Since the original student model does not include subject names, reports label them *Subject 1*, *Subject 2*, etc. Such comparisons assume subject positions mean the same subject for every student; keep entry order consistent when entering marks.
+Class average is the average of each student's percentage, so students with different numbers of subjects are weighted equally. Subject-wise averages use only the students who have a mark at that subject position. Since the original student model does not include subject names, reports label them *Subject 1*, *Subject 2*, etc. Such comparisons assume subject positions mean the same subject for every student; keep entry order consistent when entering marks. The class report warns when the numbers of subjects differ between students.
 
 The topper and ranks use descending percentage, then descending total marks, then ascending roll number. Each student gets a consecutive rank even if percentages are equal.
 
@@ -72,4 +72,4 @@ The responsibilities below follow the team's Phase-I/Phase-II documents. The tea
 | Bhaskar Bahukhandi | Stack, undo and FIFO request queue | `ChangeHistory.*`, `RequestQueue.*` |
 | Aditya Kukrety | Grades, subject/class reports and saved records | `AcademicProcessing.*`, `RecordStorage.*` |
 
-All header files are in `include/`; C++ implementations are in `src/`. Final integration review, cross-platform testing and report updates belong to the whole team. Temporary tests, build products and student data are not included in the repository.
+All header files are in `include/`; C++ implementations are in `src/`. Integration regression checks have been performed on Linux with GCC and Clang. Windows-specific validation, final acceptance and report updates belong to the whole team. Temporary tests, build products and student data are not included in the repository.
