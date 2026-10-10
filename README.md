@@ -2,7 +2,7 @@
 
 EduTrack is a console-based student record and academic performance program developed for the third-semester PBL subjects TCS-302 (Data Structures with C) and TCS-307 (OOP with C++).
 
-**Phase-II, Part 5:** the four functional modules are integrated. The integration review covers console workflows, reports, record persistence and safe recovery checks. Final handover, Windows-specific verification and team review are still pending.
+**Phase-II release candidate:** the four functional modules are integrated and have passed local regression checks. Windows execution, mentor confirmation of grading rules and team acceptance are still pending. This is not a deployed university information system.
 
 ## Build
 
@@ -12,7 +12,7 @@ Use a compiler supporting C++17 (recent GCC, Clang or MinGW-w64). Run from the p
 g++ -std=c++17 -Wall -Wextra -pedantic -Iinclude src/*.cpp -o edutrack
 ```
 
-Run `./edutrack` on Linux/macOS. On Windows, build with `-o edutrack.exe` and run `edutrack.exe`. The working folder is where `students.txt` will be saved. No external packages or database are needed.
+Run `./edutrack` on Linux/macOS. On Windows, compile with MinGW-w64 or MSYS2 and run `.\edutrack.exe` in PowerShell (or `edutrack.exe` in Command Prompt). The working folder is where `students.txt` will be saved. No external packages or database are needed.
 
 ## Menu
 
@@ -72,4 +72,18 @@ The responsibilities below follow the team's Phase-I/Phase-II documents. The tea
 | Bhaskar Bahukhandi | Stack, undo and FIFO request queue | `ChangeHistory.*`, `RequestQueue.*` |
 | Aditya Kukrety | Grades, subject/class reports and saved records | `AcademicProcessing.*`, `RecordStorage.*` |
 
-All header files are in `include/`; C++ implementations are in `src/`. Integration regression checks have been performed on Linux with GCC and Clang. Windows-specific validation, final acceptance and report updates belong to the whole team. Temporary tests, build products and student data are not included in the repository.
+All header files are in `include/`; C++ implementations are in `src/`. Temporary test programs, build products and student data are not included in the repository.
+
+## Release check and handover
+
+This version was compiled with GCC and Clang using `-std=c++17 -Wall -Wextra -Werror -pedantic`. Twenty-two scripted console checks passed on Linux, including add/update/delete, searches and ranking, undo and queue processing, grade and class reports, file restart, invalid file rejection, recovery-file blocking and a 100-record run. These checks do **not** establish Windows compatibility: no Windows runtime was available for this verification.
+
+On the demonstration PC, confirm the following **before merging or presenting**:
+
+1. Open a terminal in the project folder. If PowerShell does not expand `src/*.cpp` for your compiler, use `g++ -std=c++17 -Wall -Wextra -pedantic -Iinclude (Get-ChildItem src -Filter *.cpp | ForEach-Object FullName) -o edutrack.exe`. Then run `.\edutrack.exe`.
+2. Add two students with distinct roll numbers, consistent subject order and different marks. Check search, sorted rank, grade and class report.
+3. Queue an update followed by a delete. Process both, then use undo to restore the deleted record.
+4. Select Save, exit, reopen from the same folder and check that both records and their details reload correctly. Undo history and unprocessed requests will **not** reload.
+5. Make a separate copy of `students.txt` before testing corruption recovery. The program should refuse malformed input without overwriting the file. Restore the good file afterward.
+
+The project report's earlier progress percentage and testing claims describe an older stage. Update those fields using evidence from the team's actual final review. Confirm the project-specific grade and performance thresholds with the mentor; the proposal does not define an official grading scale. Team members should review their assigned modules, understand the logic and accurately document what they personally contributed. Only merge the stacked draft pull requests into `main` after that review.
