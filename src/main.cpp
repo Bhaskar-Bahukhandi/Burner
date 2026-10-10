@@ -1,4 +1,6 @@
+#include "ChangeHistory.h"
 #include "RecordAlgorithms.h"
+#include "RequestQueue.h"
 #include "StudentManagement.h"
 
 #include <cctype>
@@ -106,8 +108,61 @@ void showRankList(const std::vector<Student>& students) {
     }
 }
 
+const char* requestName(RequestType type) {
+    switch (type) {
+        case RequestType::Add: return "Add";
+        case RequestType::Update: return "Update";
+        case RequestType::Delete: return "Delete";
+    }
+    return "Unknown";
+}
+
+void displayQueue(const RequestQueue& queue) {
+    const auto requests = queue.pending();
+    if (requests.empty()) {
+        std::cout << "No pending requests.\n";
+        return;
+    }
+    std::cout << "Pending requests (first to last):\n";
+    for (std::size_t i = 0; i < requests.size(); ++i) {
+        std::cout << (i + 1) << ". " << requestName(requests[i].type)
+                  << " | Roll " << requests[i].rollNumber << "\n";
+    }
+}
+
+void reportResult(const std::optional<ProcessResult>& result) {
+    if (!result) {
+        std::cout << "No pending requests.\n";
+        return;
+    }
+    std::cout << requestName(result->request.type)
+              << " request for roll " << result->request.rollNumber
+              << (result->applied ? " completed.\n"
+                                  : " rejected (record missing, duplicate, or invalid). "
+                                    "The request was removed; records were not changed.\n");
+}
+
+bool queueRequest(RequestQueue& queue) {
+    std::cout << "Request types: 1. Add  2. Update  3. Delete\n";
+    auto type = readNumber("Request type: ", 1, 3);
+    if (!type) return false;
+    auto roll = readNumber("Roll number: ", 1, 999999999);
+    if (!roll) return false;
+
+    if (*type == 3) {
+        queue.enqueueDelete(*roll);
+    } else {
+        auto student = enterStudent(*roll);
+        if (!student) return false;
+        if (*type == 1) queue.enqueueAdd(*student);
+        else queue.enqueueUpdate(*student);
+    }
+    std::cout << "Request queued. Pending: " << queue.size() << "\n";
+    return true;
+}
+
 void showMenu() {
-    std::cout << "\n========== EduTrack (Part 2) ==========\n"
+    std::cout << "\n========== EduTrack (Part 3) ==========\n"
               << "1. Add student\n"
               << "2. Display all students\n"
               << "3. Linear search by roll number\n"
@@ -118,17 +173,25 @@ void showMenu() {
               << "8. Sort students by total marks\n"
               << "9. Show rank list\n"
               << "10. Find rank by roll number\n"
+              << "11. Queue a record request\n"
+              << "12. Process next request\n"
+              << "13. Show pending requests\n"
+              << "14. Undo last successful change\n"
+              << "15. Process all pending requests\n"
               << "0. Exit\n";
 }
 }  // namespace
 
 int main() {
     StudentManagement records;
-    std::cout << "Records are stored in memory for this version; they are not saved yet.\n";
+    ChangeHistory history;
+    RequestQueue queue;
+    std::cout << "Records, queued requests and undo history are held in memory. "
+                 "They are not saved yet.\n";
 
     while (true) {
         showMenu();
-        auto choice = readNumber("Choice: ", 0, 10);
+        auto choice = readNumber("Choice: ", 0, 15);
         if (!choice || *choice == 0) break;
 
         if (*choice == 2) {
@@ -151,6 +214,31 @@ int main() {
             showRankList(records.allStudents());
             continue;
         }
+        if (*choice == 11) {
+            if (!queueRequest(queue)) break;
+            continue;
+        }
+        if (*choice == 12) {
+            reportResult(queue.processNext(records, history));
+            continue;
+        }
+        if (*choice == 13) {
+            displayQueue(queue);
+            continue;
+        }
+        if (*choice == 14) {
+            std::cout << (history.undo(records) ? "Last change undone.\n"
+                                               : "Nothing to undo.\n");
+            continue;
+        }
+        if (*choice == 15) {
+            if (queue.size() == 0) {
+                std::cout << "No pending requests.\n";
+            } else {
+                while (queue.size() != 0) reportResult(queue.processNext(records, history));
+            }
+            continue;
+        }
 
         auto roll = readNumber("Roll number: ", 1, 999999999);
         if (!roll) break;
@@ -166,8 +254,8 @@ int main() {
             if (rank) std::cout << "Rank: " << *rank << "\n";
             else std::cout << "Student not found.\n";
         } else if (*choice == 5) {
-            std::cout << (records.deleteStudent(*roll) ? "Student deleted.\n"
-                                                       : "Student not found.\n");
+            std::cout << (history.deleteStudent(records, *roll) ? "Student deleted.\n"
+                                                               : "Student not found.\n");
         } else if (*choice == 1 || *choice == 4) {
             const bool exists = records.findStudent(*roll) != nullptr;
             if (*choice == 1 && exists) {
@@ -181,12 +269,12 @@ int main() {
 
             auto student = enterStudent(*roll);
             if (!student) break;
-            const bool saved = (*choice == 1) ? records.addStudent(*student)
-                                               : records.updateStudent(*roll, *student);
+            const bool saved = (*choice == 1) ? history.addStudent(records, *student)
+                                               : history.updateStudent(records, *roll, *student);
             std::cout << (saved ? (*choice == 1 ? "Student added.\n" : "Student updated.\n")
                                  : "Could not save record.\n");
         }
     }
 
-    std::cout << "Goodbye. Records from this session were not saved.\n";
+    std::cout << "Goodbye. Records and pending requests from this session were not saved.\n";
 }
