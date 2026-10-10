@@ -1,9 +1,12 @@
+#include "AcademicProcessing.h"
 #include "ChangeHistory.h"
+#include "RecordStorage.h"
 #include "RecordAlgorithms.h"
 #include "RequestQueue.h"
 #include "StudentManagement.h"
 
 #include <cctype>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <optional>
@@ -35,15 +38,15 @@ std::optional<std::string> readText(const std::string& prompt, std::size_t maxLe
         std::cout << prompt;
         if (!std::getline(std::cin, value)) return std::nullopt;
 
-        bool hasLetters = false;
+        bool hasText = false;
+        bool hasControl = false;
         for (unsigned char c : value) {
-            if (!std::isspace(c)) {
-                hasLetters = true;
-                break;
-            }
+            if (std::iscntrl(c)) hasControl = true;
+            if (!std::isspace(c)) hasText = true;
         }
-        if (hasLetters && value.size() <= maxLength) return value;
-        std::cout << "Enter non-empty text (maximum " << maxLength << " characters).\n";
+        if (hasText && !hasControl && value.size() <= maxLength) return value;
+        std::cout << "Enter non-empty text without control characters (maximum "
+                  << maxLength << " characters).\n";
     }
 }
 
@@ -84,7 +87,10 @@ void showSummary(const Student& student) {
     std::cout << "Roll " << student.rollNumber() << " | " << student.name()
               << " | Total: " << RecordAlgorithms::totalMarks(student)
               << " | Percentage: " << std::fixed << std::setprecision(2)
-              << RecordAlgorithms::percentage(student) << "%\n";
+              << RecordAlgorithms::percentage(student) << "%"
+              << " | Grade: " << AcademicProcessing::grade(RecordAlgorithms::percentage(student))
+              << " | " << AcademicProcessing::category(RecordAlgorithms::percentage(student))
+              << "\n";
 }
 
 void showOrdered(const RecordAlgorithms::StudentView& students) {
@@ -161,8 +167,66 @@ bool queueRequest(RequestQueue& queue) {
     return true;
 }
 
+void showStudentReport(const StudentManagement& records, int roll) {
+    const Student* student = records.findStudent(roll);
+    if (!student) {
+        std::cout << "Student not found.\n";
+        return;
+    }
+    showStudent(*student);
+    showSummary(*student);
+    const auto average = AcademicProcessing::classAverage(records.allStudents());
+    if (average) {
+        const double difference = RecordAlgorithms::percentage(*student) - *average;
+        std::cout << "Class average: " << std::fixed << std::setprecision(2)
+                  << *average << "% | Difference: " << std::showpos
+                  << difference << std::noshowpos << " percentage points\n";
+    }
+}
+
+void showClassReport(const StudentManagement& records) {
+    const auto& students = records.allStudents();
+    const auto average = AcademicProcessing::classAverage(students);
+    if (!average) {
+        std::cout << "No student records yet.\n";
+        return;
+    }
+    std::cout << "Class size: " << students.size() << "\n"
+              << "Average percentage: " << std::fixed << std::setprecision(2)
+              << *average << "%\n";
+    const Student* topper = AcademicProcessing::topStudent(students);
+    if (topper) {
+        std::cout << "Top performer: ";
+        showSummary(*topper);
+    }
+    std::size_t excellent = 0, good = 0, averageCount = 0, needsImprovement = 0;
+    for (const Student& student : students) {
+        const std::string band = AcademicProcessing::category(
+            RecordAlgorithms::percentage(student));
+        if (band == "Excellent") ++excellent;
+        else if (band == "Good") ++good;
+        else if (band == "Average") ++averageCount;
+        else ++needsImprovement;
+    }
+    std::cout << "Performance bands: Excellent " << excellent
+              << ", Good " << good << ", Average " << averageCount
+              << ", Needs Improvement " << needsImprovement << "\n";
+    for (const SubjectResult& subject : AcademicProcessing::subjectResults(students)) {
+        std::cout << "Subject " << subject.number << " (" << subject.students
+                  << " students): average " << std::fixed << std::setprecision(2)
+                  << subject.average << ", lowest " << subject.lowest
+                  << ", highest " << subject.highest << "\n";
+    }
+}
+
+bool confirmation(const std::string& prompt) {
+    std::cout << prompt << " Type YES to confirm: ";
+    std::string answer;
+    return std::getline(std::cin, answer) && answer == "YES";
+}
+
 void showMenu() {
-    std::cout << "\n========== EduTrack (Part 3) ==========\n"
+    std::cout << "\n========== EduTrack (Part 4) ==========\n"
               << "1. Add student\n"
               << "2. Display all students\n"
               << "3. Linear search by roll number\n"
@@ -178,7 +242,11 @@ void showMenu() {
               << "13. Show pending requests\n"
               << "14. Undo last successful change\n"
               << "15. Process all pending requests\n"
-              << "0. Exit\n";
+              << "16. Student academic report\n"
+              << "17. Class and subject report\n"
+              << "18. Save student records\n"
+              << "19. Reload saved records\n"
+              << "0. Save and exit\n";
 }
 }  // namespace
 
@@ -186,13 +254,98 @@ int main() {
     StudentManagement records;
     ChangeHistory history;
     RequestQueue queue;
-    std::cout << "Records, queued requests and undo history are held in memory. "
-                 "They are not saved yet.\n";
+    const std::string filename = "students.txt";
+    bool dirty = false;
+    namespace fs = std::filesystem;
+    std::error_code fileError;
+    const bool hasData = fs::exists(filename, fileError);
+    if (fileError) {
+        std::cerr << "Cannot inspect saved records: " << fileError.message() << "\n";
+        return 1;
+    }
+    // Refuse to start if an interrupted save left a backup that needs attention.
+    if (fs::exists(filename + ".bak", fileError) ||
+        fs::exists(filename + ".tmp", fileError) || fileError) {
+        std::cerr << "Temporary/backup records detected, or storage could not be checked. "
+                     "Inspect students.txt, students.txt.bak and students.txt.tmp "
+                     "before running again.\n";
+        return 1;
+    }
+    if (hasData) {
+        std::string error;
+        if (!RecordStorage::load(filename, records, error)) {
+            std::cerr << "Cannot load saved records: " << error
+                      << ". The file was not changed.\n";
+            return 1;
+        }
+        std::cout << "Loaded " << records.allStudents().size()
+                  << " saved student records.\n";
+    } else {
+        std::cout << "No saved file found. Starting with empty records.\n";
+    }
+    std::cout << "Record changes are saved on exit or by option 18. "
+                 "Undo history and queued requests are not saved.\n";
 
     while (true) {
         showMenu();
-        auto choice = readNumber("Choice: ", 0, 15);
-        if (!choice || *choice == 0) break;
+        auto choice = readNumber("Choice: ", 0, 19);
+        if (!choice || *choice == 0) {
+            if (queue.size() && choice &&
+                !confirmation("Pending requests will be discarded without processing.")) {
+                continue;
+            }
+            if (dirty) {
+                std::string error;
+                if (!RecordStorage::save(filename, records, error)) {
+                    std::cerr << "Save failed: " << error << "\n";
+                    if (!choice) return 1;  // Input ended; cannot offer recovery.
+                    std::cerr << "Records remain in memory. Resolve the issue and retry.\n";
+                    continue;
+                }
+                dirty = false;
+                std::cout << "Saved student records.\n";
+                if (!error.empty()) std::cout << "Note: " << error << "\n";
+            }
+            break;
+        }
+        if (*choice == 18) {
+            std::string error;
+            if (RecordStorage::save(filename, records, error)) {
+                dirty = false;
+                std::cout << "Saved " << records.allStudents().size()
+                          << " student records.\n";
+                if (!error.empty()) std::cout << "Note: " << error << "\n";
+            } else std::cout << "Save failed: " << error << "\n";
+            continue;
+        }
+        if (*choice == 19) {
+            if ((dirty || queue.size() || history.undoCount()) &&
+                !confirmation("Reloading will replace records and clear undo/queue history.")) {
+                std::cout << "Reload cancelled.\n";
+                continue;
+            }
+            std::string error;
+            if (RecordStorage::load(filename, records, error)) {
+                history.clear();
+                queue.clear();
+                dirty = false;
+                std::cout << "Records reloaded. Undo history and queue cleared.\n";
+            } else {
+                std::cout << "Reload failed: " << error
+                          << ". Current records, history and queue were kept.\n";
+            }
+            continue;
+        }
+        if (*choice == 17) {
+            showClassReport(records);
+            continue;
+        }
+        if (*choice == 16) {
+            auto roll = readNumber("Roll number: ", 1, 999999999);
+            if (!roll) break;
+            showStudentReport(records, *roll);
+            continue;
+        }
 
         if (*choice == 2) {
             const auto& students = records.allStudents();
@@ -219,7 +372,9 @@ int main() {
             continue;
         }
         if (*choice == 12) {
-            reportResult(queue.processNext(records, history));
+            const auto result = queue.processNext(records, history);
+            if (result && result->applied) dirty = true;
+            reportResult(result);
             continue;
         }
         if (*choice == 13) {
@@ -227,15 +382,21 @@ int main() {
             continue;
         }
         if (*choice == 14) {
-            std::cout << (history.undo(records) ? "Last change undone.\n"
-                                               : "Nothing to undo.\n");
+            if (history.undo(records)) {
+                dirty = true;
+                std::cout << "Last change undone.\n";
+            } else std::cout << "Nothing to undo.\n";
             continue;
         }
         if (*choice == 15) {
             if (queue.size() == 0) {
                 std::cout << "No pending requests.\n";
             } else {
-                while (queue.size() != 0) reportResult(queue.processNext(records, history));
+                while (queue.size() != 0) {
+                    const auto result = queue.processNext(records, history);
+                    if (result && result->applied) dirty = true;
+                    reportResult(result);
+                }
             }
             continue;
         }
@@ -254,8 +415,10 @@ int main() {
             if (rank) std::cout << "Rank: " << *rank << "\n";
             else std::cout << "Student not found.\n";
         } else if (*choice == 5) {
-            std::cout << (history.deleteStudent(records, *roll) ? "Student deleted.\n"
-                                                               : "Student not found.\n");
+            if (history.deleteStudent(records, *roll)) {
+                dirty = true;
+                std::cout << "Student deleted.\n";
+            } else std::cout << "Student not found.\n";
         } else if (*choice == 1 || *choice == 4) {
             const bool exists = records.findStudent(*roll) != nullptr;
             if (*choice == 1 && exists) {
@@ -271,10 +434,26 @@ int main() {
             if (!student) break;
             const bool saved = (*choice == 1) ? history.addStudent(records, *student)
                                                : history.updateStudent(records, *roll, *student);
+            if (saved) dirty = true;
             std::cout << (saved ? (*choice == 1 ? "Student added.\n" : "Student updated.\n")
                                  : "Could not save record.\n");
         }
     }
 
-    std::cout << "Goodbye. Records and pending requests from this session were not saved.\n";
+    // An EOF during a form also exits the loop. Save those edits as well.
+    if (dirty) {
+        std::string error;
+        if (!RecordStorage::save(filename, records, error)) {
+            std::cerr << "Save failed on exit: " << error
+                      << ". Unsaved records remain only in this session.\n";
+            return 1;
+        }
+        std::cout << "Saved student records.\n";
+        if (!error.empty()) std::cout << "Note: " << error << "\n";
+    }
+    if (queue.size() != 0) {
+        std::cout << "Warning: " << queue.size()
+                  << " unprocessed queued requests were not saved.\n";
+    }
+    std::cout << "Goodbye. Undo history and queued requests were not saved.\n";
 }

@@ -1,80 +1,75 @@
 # EduTrack
 
-EduTrack is a console-based student academic record management project for third-semester Data Structures with C (TCS-302) and Object Oriented Programming with C++ (TCS-307).
+EduTrack is a console-based student record and academic performance program developed for the third-semester PBL subjects TCS-302 (Data Structures with C) and TCS-307 (OOP with C++).
 
-**Current stage: Phase-II Part 3.** Student records, searching, sorting, ranking, undo and queued requests are implemented. Records are still kept in memory and are lost when the program exits. File save/load and academic reports are planned for Part 4.
+**Phase-II, Part 4:** student records, searching, sorting, ranking, undo, queued requests, academic reports and file save/load are implemented. Final integration review and presentation checks are still pending.
 
-## Build and run
+## Build
 
-Install a C++17 compiler and run from the project folder:
+Use a compiler supporting C++17 (recent GCC, Clang or MinGW-w64). Run from the project folder:
 
 ```sh
 g++ -std=c++17 -Wall -Wextra -pedantic -Iinclude src/*.cpp -o edutrack
 ```
 
-On Windows, use `-o edutrack.exe` and run `edutrack.exe`. On Linux/macOS, run `./edutrack`.
+Run `./edutrack` on Linux/macOS. On Windows, build with `-o edutrack.exe` and run `edutrack.exe`. The working folder is where `students.txt` will be saved. No external packages or database are needed.
 
 ## Menu
 
-| Option | Action |
+| Option | Work |
 | --- | --- |
-| 1–5 | Add, display, linear-search, update or delete students |
-| 6 | Binary search by roll number |
-| 7–8 | View records sorted by percentage or total marks |
-| 9–10 | View rank list or find an individual's rank |
-| 11 | Queue an add, update or delete request |
-| 12 | Process the oldest waiting request |
-| 13 | Show queued requests in processing order |
-| 14 | Undo the last successful record change |
-| 15 | Process all waiting requests |
-| 0 | Exit |
+| 1–5 | Add, display, linear-search, update and delete student records |
+| 6–10 | Binary search, sort by percentage/total, rank list and rank lookup |
+| 11–15 | Queue requests, process them in order and undo completed changes |
+| 16 | Student marks, percentage, grade, category and class-average comparison |
+| 17 | Class average, topper, performance bands and subject-wise report |
+| 18 | Save records now |
+| 19 | Reload saved records (with confirmation if the session has changes) |
+| 0 | Save changes and exit |
 
-Each record has a positive roll number, non-empty name and branch, a semester from 1 to 12, and 1–20 subject marks between 0 and 100. Roll numbers are unique and cannot be changed by an update.
+A student has a unique positive roll number (up to 999999999), name, branch, semester (1–12), and 1–20 marks (each from 0 to 100). Roll numbers stay fixed during updates. Searching and sorting do not change the stored order.
 
-## Stack and queue
+## Percentage, grades and performance
 
-`ChangeHistory` uses `std::stack<StudentManagement>` to hold the complete record state before a **successful** add, update or delete. Undo restores the last snapshot, including the order of records. Failed operations do not add an undo step, and an empty undo stack is handled safely. This approach is straightforward for a small course project, but each undo entry copies the current records, so memory use grows with the number and size of changes.
+Every subject currently has equal weight and is marked out of 100. Therefore **percentage = total subject marks / number of subjects**. These project grade thresholds are not claimed to be the university's official grading scale:
 
-`RequestQueue` uses `std::queue` to process requests in first-in, first-out order. You can queue an add, update or delete without running it immediately. Processing uses the same validation and undo logic as the normal menu. If a queued request is no longer valid when its turn arrives (for example, a duplicate roll number), the program **reports the rejection and removes that request without changing the records**. Queued requests are not undone; only successful record changes are undone. Pending requests remain in the queue when an earlier operation is undone.
+| Percentage | Grade |
+| --- | --- |
+| 90–100 | A |
+| 80–below 90 | B |
+| 70–below 80 | C |
+| 60–below 70 | D |
+| Below 60 | F |
 
-**Example:** queue Add(101), Add(102), Delete(101). Processing all three leaves only roll 102. Undoing once restores roll 101.
+The four performance categories are **Excellent** (85 and above), **Good** (70–below 85), **Average** (50–below 70), and **Needs Improvement** (below 50). These cutoffs are project rules and can be changed if the mentor specifies different ones.
 
-The stack and queue are temporary, like the records. They do not survive restarting the program.
+Class average is the average of each student's percentage, so students with different numbers of subjects are weighted equally. Subject-wise averages use only the students who have a mark at that subject position. Since the original student model does not include subject names, reports label them *Subject 1*, *Subject 2*, etc. Such comparisons assume subject positions mean the same subject for every student; keep entry order consistent when entering marks.
 
-## Searching, sorting and ranks
+The topper and ranks use descending percentage, then descending total marks, then ascending roll number. Each student gets a consecutive rank even if percentages are equal.
 
-Linear search scans records in insertion order. Binary search creates a roll-number-sorted view and searches it. Sorting does not rearrange the original records.
+## Records and recovery
 
-The rank list is ordered by descending percentage, then descending total marks, then ascending roll number. Ranks are consecutive positions; equal percentages do not automatically share a rank. Each subject counts equally, and percentage is the mean of the subject marks (each out of 100). Insertion sort is used for the sorted views. It is O(n²); preparing a new sorted view for each binary search also takes O(n²), so a single binary search is not faster overall than a linear search in this design.
+Records are stored in the human-readable `students.txt` file in the working folder. The program loads it at startup, and saves changed records when exiting normally. Option 18 saves immediately. If startup finds an invalid record file, it **stops with an error instead of overwriting it**.
 
-## Responsibilities and remaining work
+Saving first writes `students.txt.tmp`. If an older `students.txt` exists, it is renamed to `students.txt.bak` while the new file is put in place; the backup is then removed. If the write or rename fails, the program reports it. If `.tmp` or `.bak` remains after an interrupted save, the program refuses to start: inspect these files and restore the correct copy manually before trying again. Keep a separate backup when handling important records. This is a small single-user file-based project, not a concurrent database.
 
-| Part | Assigned team member | Module |
+Loading validates the header, record count, marks, unique roll numbers and file contents before replacing the active records. Reloading clears undo history and pending requests **only after a successful load**. Undo history and queued requests are **never stored on disk**; any unprocessed requests are lost on exit. The program warns about pending requests before leaving.
+
+## Stack, queue and searching
+
+`ChangeHistory` keeps a stack of complete record snapshots, allowing the last successful add/update/delete to be undone. Failed operations do not create undo entries. `RequestQueue` runs queued add/update/delete requests in FIFO order; rejected requests are reported and removed without changing records. Both use the same record checks.
+
+The search module demonstrates linear search and binary search. Binary search first prepares a roll-number-sorted view. Insertion sort is used for sorted views: its worst-case cost is O(n²). The binary-search view is re-sorted for each lookup, so a single lookup is not faster overall than linear search. Full-copy undo snapshots are also intended for small classroom datasets, not large-scale deployment.
+
+## File ownership by module
+
+The responsibilities below follow the team's Phase-I/Phase-II documents. The team should review the changes and confirm actual contributions before final submission.
+
+| Member | Module | Files |
 | --- | --- | --- |
-| 1 | Mohammad Rayyan Farooqui | Student class, vector storage, record management, menu |
-| 2 | Shiv Tyagi | Searching, sorting, ranking and tie handling |
-| 3 | Bhaskar Bahukhandi | Stack-based undo and FIFO request queue |
-| 4 | Aditya Kukrety | Grades, academic analysis and file handling (pending) |
-| 5–6 | Whole team | Integration, validation and final documentation (pending) |
+| Mohammad Rayyan Farooqui | Student records, vector, CRUD and main menu | `Student.*`, `StudentManagement.*`, `main.cpp` |
+| Shiv Tyagi | Search, sorting, ranking and tie handling | `RecordAlgorithms.*` |
+| Bhaskar Bahukhandi | Stack, undo and FIFO request queue | `ChangeHistory.*`, `RequestQueue.*` |
+| Aditya Kukrety | Grades, subject/class reports and saved records | `AcademicProcessing.*`, `RecordStorage.*` |
 
-These are module assignments from the project report. Team members should review and understand their modules, and document their actual contributions.
-
-## Files
-
-```text
-include/
-    Student.h
-    StudentManagement.h
-    RecordAlgorithms.h
-    ChangeHistory.h
-    RequestQueue.h
-src/
-    Student.cpp
-    StudentManagement.cpp
-    RecordAlgorithms.cpp
-    ChangeHistory.cpp
-    RequestQueue.cpp
-    main.cpp
-```
-
-No third-party libraries or database are required. Build products and local data files are excluded from Git through `.gitignore`.
+All header files are in `include/`; C++ implementations are in `src/`. Final integration review, cross-platform testing and report updates belong to the whole team. Temporary tests, build products and student data are not included in the repository.
