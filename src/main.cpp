@@ -239,7 +239,7 @@ bool confirmation(const std::string& prompt) {
 }
 
 void showMenu() {
-    std::cout << "\n========== EduTrack (Part 4) ==========\n"
+    std::cout << "\n========== EduTrack ==========\n"
               << "1. Add student\n"
               << "2. Display all students\n"
               << "3. Linear search by roll number\n"
