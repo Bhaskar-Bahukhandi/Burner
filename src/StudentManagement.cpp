@@ -5,6 +5,9 @@
 
 namespace {
 bool hasText(const std::string& value) {
+    if (std::any_of(value.begin(), value.end(), [](unsigned char c) {
+        return std::iscntrl(c);
+    })) return false;
     return std::any_of(value.begin(), value.end(), [](unsigned char c) {
         return !std::isspace(c);
     });
@@ -12,7 +15,8 @@ bool hasText(const std::string& value) {
 }  // namespace
 
 bool StudentManagement::isValid(const Student& student) {
-    if (student.rollNumber() <= 0 || student.name().size() > 80 ||
+    if (student.rollNumber() <= 0 || student.rollNumber() > 999999999 ||
+        student.name().size() > 80 ||
         student.branch().size() > 60 || !hasText(student.name()) ||
         !hasText(student.branch()) || student.semester() < 1 ||
         student.semester() > 12 || student.marks().empty() ||
