@@ -211,9 +211,22 @@ void showClassReport(const StudentManagement& records) {
     std::cout << "Performance bands: Excellent " << excellent
               << ", Good " << good << ", Average " << averageCount
               << ", Needs Improvement " << needsImprovement << "\n";
+    bool mixedSubjectCounts = false;
+    for (const Student& student : students) {
+        if (student.marks().size() != students.front().marks().size()) {
+            mixedSubjectCounts = true;
+            break;
+        }
+    }
+    if (mixedSubjectCounts) {
+        std::cout << "Note: Students have different numbers of subjects. "
+                     "Each subject average includes only records with that position; "
+                     "enter subjects in the same order for valid comparisons.\n";
+    }
     for (const SubjectResult& subject : AcademicProcessing::subjectResults(students)) {
         std::cout << "Subject " << subject.number << " (" << subject.students
-                  << " students): average " << std::fixed << std::setprecision(2)
+                  << (subject.students == 1 ? " student" : " students")
+                  << "): average " << std::fixed << std::setprecision(2)
                   << subject.average << ", lowest " << subject.lowest
                   << ", highest " << subject.highest << "\n";
     }
@@ -263,13 +276,22 @@ int main() {
         std::cerr << "Cannot inspect saved records: " << fileError.message() << "\n";
         return 1;
     }
-    // Refuse to start if an interrupted save left a backup that needs attention.
-    if (fs::exists(filename + ".bak", fileError) ||
-        fs::exists(filename + ".tmp", fileError) || fileError) {
-        std::cerr << "Temporary/backup records detected, or storage could not be checked. "
-                     "Inspect students.txt, students.txt.bak and students.txt.tmp "
-                     "before running again.\n";
-        return 1;
+    // Check each recovery file separately so an error from the first check
+    // cannot be overwritten by the second filesystem call.
+    for (const char* extension : {".bak", ".tmp"}) {
+        fileError.clear();
+        const std::string recoveryFile = filename + extension;
+        const bool present = fs::exists(recoveryFile, fileError);
+        if (fileError) {
+            std::cerr << "Cannot inspect " << recoveryFile << ": "
+                      << fileError.message() << "\n";
+            return 1;
+        }
+        if (present) {
+            std::cerr << "Recovery file " << recoveryFile
+                      << " exists. Check the saved records before restarting.\n";
+            return 1;
+        }
     }
     if (hasData) {
         std::string error;

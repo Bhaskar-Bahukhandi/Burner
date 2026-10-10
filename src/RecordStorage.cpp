@@ -149,9 +149,17 @@ bool save(const std::string& filename, const StudentManagement& records,
                 "and students.txt.bak before saving again.";
         return false;
     }
-    if (hasDestination && !fs::is_regular_file(destination)) {
-        error = "Save destination is not a regular file";
-        return false;
+    if (hasDestination) {
+        std::error_code typeError;
+        const bool regular = fs::is_regular_file(destination, typeError);
+        if (typeError) {
+            error = "Cannot inspect save destination: " + typeError.message();
+            return false;
+        }
+        if (!regular) {
+            error = "Save destination is not a regular file";
+            return false;
+        }
     }
     if (!writeRecords(temporary, records, error)) {
         std::error_code ignored;
