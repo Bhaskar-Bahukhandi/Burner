@@ -18,8 +18,20 @@ struct SubjectResult {
 
 namespace AcademicProcessing {
 
-std::string grade(double percentage);
-std::string category(double percentage);
+// The reference table comes from GEU's distance-learning documents.
+// It is not a confirmed B.Tech grading policy.
+enum class GradeScale { GeuReference, OriginalProject };
+
+struct GradeInfo {
+    std::string letter;
+    std::string rating;
+    int points; // -1 means this scheme has no defined grade points
+};
+
+GradeInfo gradeInfo(double percentage, GradeScale scale = GradeScale::GeuReference);
+std::string grade(double percentage, GradeScale scale = GradeScale::GeuReference);
+std::string scaleName(GradeScale scale);
+std::string category(double percentage, GradeScale scale = GradeScale::GeuReference);
 std::optional<double> classAverage(const std::vector<Student>& students);
 std::vector<SubjectResult> subjectResults(const std::vector<Student>& students);
 const Student* topStudent(const std::vector<Student>& students);

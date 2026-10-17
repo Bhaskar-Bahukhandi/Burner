@@ -83,25 +83,25 @@ void showStudent(const Student& student) {
     std::cout << "\n";
 }
 
-void showSummary(const Student& student) {
+void showSummary(const Student& student, AcademicProcessing::GradeScale scale) {
     std::cout << "Roll " << student.rollNumber() << " | " << student.name()
               << " | Total: " << RecordAlgorithms::totalMarks(student)
               << " | Percentage: " << std::fixed << std::setprecision(2)
               << RecordAlgorithms::percentage(student) << "%"
-              << " | Grade: " << AcademicProcessing::grade(RecordAlgorithms::percentage(student))
-              << " | " << AcademicProcessing::category(RecordAlgorithms::percentage(student))
+              << " | Grade: " << AcademicProcessing::grade(RecordAlgorithms::percentage(student), scale)
+              << " | " << AcademicProcessing::category(RecordAlgorithms::percentage(student), scale)
               << "\n";
 }
 
-void showOrdered(const RecordAlgorithms::StudentView& students) {
+void showOrdered(const RecordAlgorithms::StudentView& students, AcademicProcessing::GradeScale scale) {
     if (students.empty()) {
         std::cout << "No student records yet.\n";
         return;
     }
-    for (const Student* student : students) showSummary(*student);
+    for (const Student* student : students) showSummary(*student, scale);
 }
 
-void showRankList(const std::vector<Student>& students) {
+void showRankList(const std::vector<Student>& students, AcademicProcessing::GradeScale scale) {
     const auto ranked = RecordAlgorithms::rankList(students);
     if (ranked.empty()) {
         std::cout << "No student records yet.\n";
@@ -110,7 +110,7 @@ void showRankList(const std::vector<Student>& students) {
     std::cout << "Rank list (percentage, then total marks, then roll number):\n";
     for (const auto& entry : ranked) {
         std::cout << "Rank " << entry.rank << ": ";
-        showSummary(*entry.student);
+        showSummary(*entry.student, scale);
     }
 }
 
@@ -167,14 +167,14 @@ bool queueRequest(RequestQueue& queue) {
     return true;
 }
 
-void showStudentReport(const StudentManagement& records, int roll) {
+void showStudentReport(const StudentManagement& records, int roll, AcademicProcessing::GradeScale scale) {
     const Student* student = records.findStudent(roll);
     if (!student) {
         std::cout << "Student not found.\n";
         return;
     }
     showStudent(*student);
-    showSummary(*student);
+    showSummary(*student, scale);
     const auto average = AcademicProcessing::classAverage(records.allStudents());
     if (average) {
         const double difference = RecordAlgorithms::percentage(*student) - *average;
@@ -184,7 +184,7 @@ void showStudentReport(const StudentManagement& records, int roll) {
     }
 }
 
-void showClassReport(const StudentManagement& records) {
+void showClassReport(const StudentManagement& records, AcademicProcessing::GradeScale scale) {
     const auto& students = records.allStudents();
     const auto average = AcademicProcessing::classAverage(students);
     if (!average) {
@@ -197,12 +197,12 @@ void showClassReport(const StudentManagement& records) {
     const Student* topper = AcademicProcessing::topStudent(students);
     if (topper) {
         std::cout << "Top performer: ";
-        showSummary(*topper);
+        showSummary(*topper, scale);
     }
     std::size_t excellent = 0, good = 0, averageCount = 0, needsImprovement = 0;
     for (const Student& student : students) {
         const std::string band = AcademicProcessing::category(
-            RecordAlgorithms::percentage(student));
+            RecordAlgorithms::percentage(student), scale);
         if (band == "Excellent") ++excellent;
         else if (band == "Good") ++good;
         else if (band == "Average") ++averageCount;
@@ -259,6 +259,7 @@ void showMenu() {
               << "17. Class and subject report\n"
               << "18. Save student records\n"
               << "19. Reload saved records\n"
+              << "20. Change grading scheme / show criteria\n"
               << "0. Save and exit\n";
 }
 }  // namespace
@@ -269,6 +270,7 @@ int main() {
     RequestQueue queue;
     const std::string filename = "students.txt";
     bool dirty = false;
+    auto gradeScale = AcademicProcessing::GradeScale::GeuReference;
     namespace fs = std::filesystem;
     std::error_code fileError;
     const bool hasData = fs::exists(filename, fileError);
@@ -305,12 +307,13 @@ int main() {
     } else {
         std::cout << "No saved file found. Starting with empty records.\n";
     }
+    std::cout << "Grading: " << AcademicProcessing::scaleName(gradeScale) << "\n";
     std::cout << "Record changes are saved on exit or by option 18. "
                  "Undo history and queued requests are not saved.\n";
 
     while (true) {
         showMenu();
-        auto choice = readNumber("Choice: ", 0, 19);
+        auto choice = readNumber("Choice: ", 0, 20);
         if (!choice || *choice == 0) {
             if (queue.size() && choice &&
                 !confirmation("Pending requests will be discarded without processing.")) {
@@ -329,6 +332,24 @@ int main() {
                 if (!error.empty()) std::cout << "Note: " << error << "\n";
             }
             break;
+        }
+        if (*choice == 20) {
+            std::cout << "Grading options:\n"
+                      << "1. GEU published distance-learning reference (illustrative)\n"
+                      << "   >85 O, 75-85 A+, 65-<75 A, 55-<65 B+, "
+                         "50-<55 B, 45-<50 C, 40-<45 P, below 40 F\n"
+                      << "   Exact 85% is treated as A+ because the source table leaves 85 unspecified.\n"
+                      << "2. Original EduTrack project scale\n"
+                      << "   90+ A, 80+ B, 70+ C, 60+ D, below 60 F\n"
+                      << "Bands (Excellent/Good/Average/Needs Improvement) "
+                         "are separate project categories.\n";
+            auto selected = readNumber("Scheme (1 or 2): ", 1, 2);
+            if (!selected) break;
+            gradeScale = *selected == 1 ? AcademicProcessing::GradeScale::GeuReference
+                                        : AcademicProcessing::GradeScale::OriginalProject;
+            std::cout << "Now using: " << AcademicProcessing::scaleName(gradeScale)
+                      << " (student records unchanged).\n";
+            continue;
         }
         if (*choice == 18) {
             std::string error;
@@ -359,13 +380,13 @@ int main() {
             continue;
         }
         if (*choice == 17) {
-            showClassReport(records);
+            showClassReport(records, gradeScale);
             continue;
         }
         if (*choice == 16) {
             auto roll = readNumber("Roll number: ", 1, 999999999);
             if (!roll) break;
-            showStudentReport(records, *roll);
+            showStudentReport(records, *roll, gradeScale);
             continue;
         }
 
@@ -377,16 +398,16 @@ int main() {
         }
         if (*choice == 7) {
             std::cout << "Students sorted by percentage:\n";
-            showOrdered(RecordAlgorithms::sortByPercentage(records.allStudents()));
+            showOrdered(RecordAlgorithms::sortByPercentage(records.allStudents()), gradeScale);
             continue;
         }
         if (*choice == 8) {
             std::cout << "Students sorted by total marks:\n";
-            showOrdered(RecordAlgorithms::sortByTotalMarks(records.allStudents()));
+            showOrdered(RecordAlgorithms::sortByTotalMarks(records.allStudents()), gradeScale);
             continue;
         }
         if (*choice == 9) {
-            showRankList(records.allStudents());
+            showRankList(records.allStudents(), gradeScale);
             continue;
         }
         if (*choice == 11) {
