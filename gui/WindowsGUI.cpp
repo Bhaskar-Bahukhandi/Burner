@@ -219,7 +219,10 @@ private:
                 return 0;
             case WM_SIZE:
                 layout(LOWORD(l), HIWORD(l));
-                InvalidateRect(hwnd, nullptr, TRUE);
+                // Repaint child controls as well. Read-only edit boxes may be
+                // resized after their text was previously wrapped.
+                RedrawWindow(hwnd, nullptr, nullptr,
+                             RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
                 return 0;
             case WM_ERASEBKGND: {
                 HDC dc = reinterpret_cast<HDC>(w);
@@ -238,15 +241,29 @@ private:
             case WM_CTLCOLORSTATIC: {
                 HDC dc = reinterpret_cast<HDC>(w);
                 const int id = GetDlgCtrlID(reinterpret_cast<HWND>(l));
-                SetBkMode(dc, TRANSPARENT);
+                // Read-only EDIT controls also send WM_CTLCOLORSTATIC.
+                // A transparent background causes old characters to remain
+                // visible when long lines are reflowed after resizing.
+                SetBkMode(dc, OPAQUE);
                 if (id == TitleText || id == SubtitleText || id == SummaryText) {
                     SetTextColor(dc, RGB(33, 49, 68));
+                    SetBkColor(dc, RGB(234, 242, 250));
                     return reinterpret_cast<LRESULT>(headerBrush_);
                 }
                 if (id == StatusText) {
                     SetTextColor(dc, RGB(45, 59, 70));
+                    SetBkColor(dc, RGB(241, 245, 249));
                     return reinterpret_cast<LRESULT>(footerBrush_);
                 }
+                SetTextColor(dc, RGB(25, 35, 45));
+                SetBkColor(dc, GetSysColor(COLOR_WINDOW));
+                return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+            }
+            case WM_CTLCOLOREDIT: {
+                HDC dc = reinterpret_cast<HDC>(w);
+                SetBkMode(dc, OPAQUE);
+                SetTextColor(dc, RGB(25, 35, 45));
+                SetBkColor(dc, GetSysColor(COLOR_WINDOW));
                 return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
             }
             case WM_GETMINMAXINFO: {
@@ -393,7 +410,7 @@ private:
         button(NavStudents, L"Students"); button(NavQueue, L"Request Queue");
         button(NavReports, L"Reports"); button(NavGrading, L"Grading");
         label(FormHeading, L"Student details", true);
-        label(FormHelp, L"Enter marks in the same subject order for everyone.");
+        label(FormHelp, L"Use the same subject order.");
         label(RollLabel, L"Roll number"); edit(FieldRoll);
         label(NameLabel, L"Student name"); edit(FieldName);
         label(BranchLabel, L"Branch"); edit(FieldBranch);
@@ -413,7 +430,7 @@ private:
                            {L"%", 63}, {L"Grade", 63}, {L"Band", 140}});
         label(ListHint, L"Select a row to edit it. Sorting changes the display only.");
         label(QueueHeading, L"Request queue", true);
-        label(QueueHelp, L"Queue changes on the left. Process them in order. Undo reverses completed changes.");
+        label(QueueHelp, L"Requests are processed in order. Undo reverses the last completed change.");
         list(QueueList, {{L"Position", 100}, {L"Action", 160}, {L"Roll number", 155}});
         button(QueueNext, L"Process next"); button(QueueAll, L"Process all");
         button(Undo, L"Undo last change");
@@ -424,12 +441,19 @@ private:
         add(ReportOutput, L"EDIT", L"Choose a report to view its details.",
             ES_MULTILINE | ES_READONLY | WS_VSCROLL | ES_AUTOVSCROLL | WS_TABSTOP,
             WS_EX_CLIENTEDGE);
+        if (HWND report = control(ReportOutput))
+            SendMessageW(report, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+                         MAKELPARAM(12, 12));
         label(GradingHeading, L"Grading", true);
         label(GradingHelp, L"Choose how EduTrack displays grades. Student marks never change.");
         combo(GradeChoice, {L"GEU published reference (illustrative)", L"Original EduTrack A-F"});
         add(GradeExplanation, L"EDIT", L"", ES_MULTILINE | ES_READONLY |
              WS_VSCROLL | ES_AUTOVSCROLL | WS_TABSTOP, WS_EX_CLIENTEDGE);
-        updateGradeText();
+        if (HWND grading = control(GradeExplanation))
+            SendMessageW(grading, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+                         MAKELPARAM(12, 12));
+        // Fill the long grading text only after its edit box has its
+        // final size. Otherwise Win32 may cache 100-pixel-wide wrapping.
         setSummary();
         return headerBrush_ && sideBrush_ && footerBrush_ && normalFont_ &&
                titleFont_ && sectionFont_ && control(StudentList) &&
@@ -459,21 +483,21 @@ private:
         place(NavGrading, navX, 264, navW, 44);
 
         place(FormHeading, left, top, formW, 34);
-        place(FormHelp, left, top + 41, formW, 42);
+        place(FormHelp, left, top + 44, formW, 31);
         const int formLabels[] = {RollLabel, NameLabel, BranchLabel, SemesterLabel, MarksLabel};
         const int formFields[] = {FieldRoll, FieldName, FieldBranch, FieldSemester, FieldMarks};
         for (int i = 0; i < 5; ++i) {
-            place(formLabels[i], left, top + 96 + i * 59, formW, 24);
-            place(formFields[i], left, top + 119 + i * 59, formW, 32);
+            place(formLabels[i], left, top + 112 + i * 59, formW, 25);
+            place(formFields[i], left, top + 138 + i * 59, formW, 32);
         }
         const int half = (formW - 10) / 2;
-        place(AddStudent, left, top + 413, half, 39);
-        place(UpdateStudent, left + half + 10, top + 413, half, 39);
-        place(DeleteStudent, left, top + 461, half, 39);
-        place(ClearForm, left + half + 10, top + 461, half, 39);
-        place(QueueAdd, left, top + 413, formW, 39);
-        place(QueueUpdate, left, top + 461, half, 39);
-        place(QueueDelete, left + half + 10, top + 461, half, 39);
+        place(AddStudent, left, top + 432, half, 39);
+        place(UpdateStudent, left + half + 10, top + 432, half, 39);
+        place(DeleteStudent, left, top + 480, half, 39);
+        place(ClearForm, left + half + 10, top + 480, half, 39);
+        place(QueueAdd, left, top + 432, formW, 39);
+        place(QueueUpdate, left, top + 480, half, 39);
+        place(QueueDelete, left + half + 10, top + 480, half, 39);
 
         place(RecordsHeading, rightX, top, rightW, 34);
         place(SearchLabel, rightX, top + 51, 144, 26);
@@ -490,9 +514,9 @@ private:
         place(ListHint, rightX, bodyBottom - 38, rightW, 38);
 
         place(QueueHeading, rightX, top, rightW, 34);
-        place(QueueHelp, rightX, top + 44, rightW, 62);
-        place(QueueList, rightX, top + 117, rightW,
-              bodyBottom - (top + 117) - 51);
+        place(QueueHelp, rightX, top + 48, rightW, 54);
+        place(QueueList, rightX, top + 120, rightW,
+              bodyBottom - (top + 120) - 51);
         const int qw = (rightW - 20) / 3;
         place(QueueNext, rightX, bodyBottom - 41, qw, 38);
         place(QueueAll, rightX + qw + 10, bodyBottom - 41, qw, 38);
@@ -538,11 +562,13 @@ private:
         setText(NavGrading, page == Page::Grading ? L"> Grading" : L"Grading");
         setText(FormHeading, page == Page::Queue ? L"Request details" : L"Student details");
         setText(FormHelp, page == Page::Queue
-                ? L"Enter the record to queue. A delete only needs the roll number."
-                : L"Marks use the same subject order for every student.");
+                ? L"For deletion, enter only the roll number."
+                : L"Use the same subject order.");
         RECT rect{};
         GetClientRect(window_, &rect);
         layout(rect.right, rect.bottom);
+        // Populate the grading explanation at its actual width.
+        if (page == Page::Grading) updateGradeText();
     }
 
     void status(const std::wstring& value) { setText(StatusText, value); }
@@ -786,7 +812,15 @@ private:
             L"The performance bands are separate project categories.\r\n"
             L"Changing the displayed grading scheme does not edit marks or saved files.\r\n"
             L"Please confirm the applicable grading policy with our mentor.";
-        setText(GradeExplanation, explanation);
+        HWND output = control(GradeExplanation);
+        if (!output) return;
+        SendMessageW(output, WM_SETREDRAW, FALSE, 0);
+        SetWindowTextW(output, explanation.c_str());
+        SendMessageW(output, EM_SETSEL, 0, 0);
+        SendMessageW(output, EM_SCROLLCARET, 0, 0);
+        SendMessageW(output, WM_SETREDRAW, TRUE, 0);
+        RedrawWindow(output, nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
     }
     void showHelp() {
         showPage(Page::Students);
