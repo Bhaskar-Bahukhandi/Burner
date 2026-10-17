@@ -1,0 +1,12 @@
+# Compiled files and local data
+*.exe
+*.o
+*.obj
+*.out
+edutrack
+students.txt
+students.txt.tmp
+students.txt.bak
+
+# Editor settings
+.vscode/

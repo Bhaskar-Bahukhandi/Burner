@@ -1,58 +1,112 @@
 # EduTrack
 
-EduTrack is a C++ console program for keeping student records and checking academic performance. It was planned for the third-semester PBL work in Data Structures with C (TCS-302) and OOP with C++ (TCS-307).
+EduTrack keeps student records, marks and academic reports in a C++ application. It has a console menu and an optional Windows desktop interface. The project uses classes, vectors, searching, sorting, stacks, queues and file handling for the TCS-302 / TCS-307 Phase-II PBL.
 
-## Project features
+## Features
 
-- Add, view, search, update and delete student records.
-- Store subject marks and calculate total marks, percentage and grades.
-- Search by roll number using linear or binary search.
-- Sort students and display the rank list and top performer.
-- Show performance categories, subject-wise results and class-average comparisons.
-- Use a stack to undo changes and a queue to process record requests in order.
-- Save records in `students.txt` and load them when the program starts again.
+- Add, find, update and delete student details and marks.
+- Search by roll number, sort by marks or percentage, and display ranks.
+- Undo successful changes using a stack and process queued requests in order.
+- Display student and class reports, including subject-wise averages.
+- Save records in `students.txt` and reload them after restarting.
+- Change between two **illustrative** grading schemes without changing saved marks.
 
 ## Team modules
 
-| Team member | Responsibility | Files |
+| Member | Work | Code |
 | --- | --- | --- |
-| Mohammad Rayyan Farooqui (Team Lead) | Student class, vector-based record management, main menu and integration | `Student.*`, `StudentManagement.*`, `main.cpp` |
-| Shiv Tyagi | Searching, sorting and rank calculation | `RecordAlgorithms.*` |
-| Bhaskar Bahukhandi | Stack-based undo and request queue | `ChangeHistory.*`, `RequestQueue.*` |
-| Aditya Kukrety | Grades, academic reports, saving and loading records | `AcademicProcessing.*`, `RecordStorage.*` |
+| Mohammad Rayyan Farooqui (lead) | Student model, record management, console menu | `Student.*`, `StudentManagement.*`, `main.cpp` |
+| Shiv Tyagi | Searching, sorting, ranking | `RecordAlgorithms.*` |
+| Bhaskar Bahukhandi | Stack, undo and request queue | `ChangeHistory.*`, `RequestQueue.*` |
+| Aditya Kukrety | Academic reports and file handling | `AcademicProcessing.*`, `RecordStorage.*` |
 
-The code is separated into `include/` (headers) and `src/` (implementations). Each member's ZIP contains their assigned module. **Extract all four ZIP files into the same project folder** to get the complete application. The README and `.gitignore` are included in the team lead's ZIP only.
+The optional `gui/WindowsGUI.cpp` uses the same classes as the console version. The module split follows our Phase-II proposal; everyone should understand the part they are presenting.
 
-## Compile and run
+## Build
 
-A C++17 compiler is required. No external libraries or database are needed.
+C++17 and its standard library are required. No external GUI packages or database are used.
 
-Linux/macOS:
+**Windows PowerShell — console:**
+
+```powershell
+g++ -std=c++17 -Wall -Wextra -pedantic -Iinclude (Get-ChildItem src -Filter *.cpp | ForEach-Object FullName) -o EduTrackConsole.exe
+.\EduTrackConsole.exe
+```
+
+**Windows PowerShell — desktop GUI (MinGW-w64):**
+
+```powershell
+g++ -std=c++17 -Wall -Wextra -pedantic -municode -mwindows -Iinclude .\gui\WindowsGUI.cpp (Get-ChildItem src -Filter *.cpp | Where-Object Name -ne 'main.cpp' | ForEach-Object FullName) -lcomctl32 -o EduTrackGUI.exe
+.\EduTrackGUI.exe
+```
+
+For Linux/macOS console builds:
 
 ```sh
 g++ -std=c++17 -Wall -Wextra -pedantic -Iinclude src/*.cpp -o edutrack
 ./edutrack
 ```
 
-Windows with MinGW-w64 and PowerShell:
+Run the app from the same working folder each time to find `students.txt`. Close the console before using the GUI, and vice versa, so they cannot overwrite one another's saved changes.
 
-```powershell
-g++ -std=c++17 -Wall -Wextra -pedantic -Iinclude (Get-ChildItem src -Filter *.cpp | ForEach-Object FullName) -o edutrack.exe
-.\edutrack.exe
-```
+## Using the Windows GUI
 
-Run the program from its project folder so it can find `students.txt`. Use the numbered menu to select an operation.
+The window has four sections, chosen from the left sidebar or the **View** menu:
 
-## How results are calculated
+- **Students:** add, update, delete and find student records. The search box lets you choose **Linear** or **Binary** search; these are algorithms taught in Data Structures. Use **Sort by** to view class rank, roll-number order or total marks. Click a table row to fill the form.
+- **Request Queue:** use the same student form to queue add/update/delete requests, view the waiting list, and process requests in FIFO order. Only successfully applied changes can be undone.
+- **Reports:** show one student's marks/grade/rank or the class and subject averages. Reports are refreshed on request after records change.
+- **Grading:** view both grading schemes and their limitations. Selecting a different scheme changes displayed grades, not marks.
 
-Each subject is marked out of 100 and has equal weight. Percentage is the total of subject marks divided by the number of subjects. Grades are A (90+), B (80+), C (70+), D (60+) and F (below 60). Performance categories are Excellent (85+), Good (70+), Average (50+) and Needs Improvement (below 50). **These are project rules, not confirmed university grading rules.**
+The **File** menu contains Save, Reload and Exit. The **Edit** menu contains Undo, Clear form and Find. Help explains the controls. The window can be minimized, maximized and resized (within a practical minimum size). Keyboard shortcuts: **Ctrl+S** Save, **Ctrl+Z** Undo, **Ctrl+F** Find, **F1** Help.
 
-Ranks are ordered by higher percentage, then higher total marks, then smaller roll number. Subject reports use `Subject 1`, `Subject 2`, etc., rather than subject names, so marks should be entered in the same subject order for each student.
+Records are stored locally. There is no login or online data transfer. Queue and undo history stay in memory; only student records are saved. Back up `students.txt` before deliberately testing corrupt-file recovery.
 
-## Record files
 
-Student records are stored in `students.txt` in the current working folder. The program loads saved records at startup and saves changes when exiting normally; option 18 also saves them immediately.
+## Grading criteria
 
-During a save, the program may create `students.txt.tmp` and `students.txt.bak` to protect the previous copy. If either file remains after an interrupted save, inspect the files and restore the correct records before restarting. Do not delete a backup without checking it first.
+The default display uses a **GEU-published distance-learning reference**, not a verified grading regulation for our B.Tech batch. The university reference also discusses moderated grade boundaries. Here, the individual student's *average of equally weighted subject marks* is used to illustrate a letter grade; an actual university course grade or SGPA may be determined differently.
 
-Undo history and pending requests are only kept while the program is running; they are not saved to disk. The program asks for confirmation before discarding queued requests during normal exit.
+| Percentage | Illustrative grade | Points | Published rating |
+| --- | --- | --- | --- |
+| Above 85 | O | 10 | Outstanding |
+| 75 to 85 | A+ | 9 | Excellent |
+| 65 to below 75 | A | 8 | Very Good |
+| 55 to below 65 | B+ | 7 | Good |
+| 50 to below 55 | B | 6 | Above Average |
+| 45 to below 50 | C | 5 | Average |
+| 40 to below 45 | P | 4 | Pass |
+| Below 40 | F | 0 | Fail |
+
+The source leaves **exactly 85%** unspecified (`>85` is O, while the printed A+ range ends at 84). EduTrack treats 85 as A+ *temporarily*, rather than claiming that GEU has published a definitive rule for that boundary. The continuous boundaries between other published whole-number bands are also an application convention; results shown here are examples, not official university records.
+
+**Source:** [Graphic Era (Deemed to be University), Programme Project Report, distance-learning grading table](https://files.geu.ac.in/odl/CIQA%202024/ppr.pdf). Confirm the current B.Tech-specific grading rules with your mentor before final submission.
+
+The original EduTrack grading scheme is still selectable: A 90+, B 80+, C 70+, D 60+, F below 60. This is a project-only fallback; it has no grade points. Use the dropdown in the GUI or menu option **20** in the console to switch schemes. The choice is for the current session; the selected scheme does not alter student marks.
+
+Performance bands are **project-defined**, not official GEU ratings:
+
+| Scheme | Excellent | Good | Average | Needs Improvement |
+| --- | --- | --- | --- | --- |
+| GEU reference grouping | 75+ | 55 to below 75 | 45 to below 55 | Below 45 |
+| Original project grouping | 85+ | 70 to below 85 | 50 to below 70 | Below 50 |
+
+For example, a student with `360/500 = 72%` displays **A (8 points, Very Good)** using the GEU reference, while the original project scheme displays **C**. Both examples show the project performance band **Good**.
+
+## Notes about subject reports and storage
+
+Every subject is out of 100 and counted equally. The current data model stores subject marks by **position**, not by subject name: enter the same subjects in the same order for all students. If subject counts vary, only students with that subject position contribute to its average, and the report displays a warning. The program doesn't currently store custom subject titles.
+
+Records are saved to `students.txt`. Temporary `students.txt.tmp` and `students.txt.bak` files can be created while saving. If these remain after an interrupted save, inspect them before restarting and do not discard a backup without checking it. Loading rejects invalid records rather than silently replacing the current list. Undo history and queued requests are not saved after exit.
+
+## Current checks and limitations
+
+The console application builds using C++17 on GCC and Clang and its data functions can be tested independently. The Win32 GUI source must also be compiled and tested on Windows/MinGW before we use it for the final demonstration. This project is meant for small student datasets; insertion sort and full undo snapshots are not designed for large institutional records.
+
+## Before the Phase-II demo
+
+- Confirm grading rules and subject order with the mentor; the GEU reference is not a verified B.Tech grading policy.
+- Enter two example students, test sorting, both searches, undo, queue and reports.
+- Save, close and reopen; verify the same marks and records load.
+- Test the GUI on the Windows demonstration laptop and keep the console version as a fallback.
+- Replace the placeholder repository/commit entries and old progress figures in the Phase-II report with accurate information.
