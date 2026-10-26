@@ -213,6 +213,14 @@ private:
                 if (IsWindow(window_)) DestroyWindow(window_);
                 break;
             }
+            // Escape must close this custom modal window even when an EDIT
+            // control currently has focus. Enter/Tab are handled by the
+            // normal dialog-key processing below.
+            if (message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE &&
+                (message.hwnd == window_ || IsChild(window_, message.hwnd))) {
+                DestroyWindow(window_);
+                continue;
+            }
             if (!IsDialogMessageW(window_, &message)) {
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
