@@ -1,4 +1,5 @@
 #include "GroupConsole.h"
+#include "AcademicInsights.h"
 
 #include <iomanip>
 #include <sstream>
@@ -41,6 +42,62 @@ namespace GroupConsole {
 bool handle(int choice, const StudentManagement& records, AcademicGroups& groups,
             const std::string& filename, AcademicProcessing::GradeScale scale,
             std::istream& input, std::ostream& output) {
+    if (choice == 26) {
+        int roll = 0;
+        if (!number(input, output, "Student roll number: ", 1, 999999999, roll))
+            return false;
+        const Student* student = records.findStudent(roll);
+        if (!student) {
+            output << "Student not found.\n";
+            return true;
+        }
+        if (!groups.groupFor(*student)) {
+            output << "Student has no valid academic group assignment.\n";
+            return true;
+        }
+        const auto report = AcademicInsights::analyze(records, groups, roll);
+        if (!report) {
+            output << "At least one other student in the same valid academic group "
+                      "is needed for a comparison.\n";
+            return true;
+        }
+        output << "\nAcademic insights (current marks only; not a prediction)\n"
+               << "Group: " << report->groupId << " | Group members: "
+               << report->groupSize << " | Other students: " << report->peerCount
+               << " | Group rank: " << report->groupRank << "\n"
+               << std::fixed << std::setprecision(2)
+               << "Student average: " << report->studentPercentage
+               << "% | Other students' average: " << report->peerPercentageAverage
+               << "%\n";
+        for (const auto& subject : report->subjects) {
+            output << subject.code << " (" << subject.name << "): "
+                   << subject.mark << "/100, other students' average "
+                   << subject.peerAverage << "/100, gap "
+                   << std::showpos << subject.difference << std::noshowpos
+                   << " marks\n";
+        }
+        if (report->largestDeficit) {
+            const auto& subject = report->subjects[*report->largestDeficit];
+            output << "Largest gap below peers: " << subject.name << " ("
+                   << -subject.difference << " marks below).\n";
+        } else {
+            output << "No subject is below the other students' average.\n";
+        }
+        if (report->largestLead) {
+            const auto& subject = report->subjects[*report->largestLead];
+            output << "Largest gap above peers: " << subject.name << " ("
+                   << subject.difference << " marks above).\n";
+        } else {
+            output << "No subject is above the other students' average.\n";
+        }
+        if (report->peerCount < 3) {
+            output << "Note: This comparison group is small; the averages "
+                      "may not represent a wider class.\n";
+        }
+        output << "These are numerical comparisons, not causes, forecasts or "
+                  "study recommendations.\n";
+        return true;
+    }
     if (choice == 24) {
         if (groups.groups().empty()) output << "No academic groups yet.\n";
         for (const auto& item : groups.groups()) {
