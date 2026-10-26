@@ -1,7 +1,7 @@
 // EduTrack Phase III hybrid desktop - Phase II familiar navigation + Phase III insights.
-// Academic calculations are read-only. Only existing academic-group assignments can
-// be changed here, and then only after an on-disk change check. Student records and
-// the in-memory queue remain managed by the coordinated Phase III console.
+// Academic calculations are read-only. Guarded student edits, undo and FIFO queue
+// actions save successful record changes after checking academic-group assignments
+// and on-disk file snapshots. The queue and undo history remain in memory.
 // Compile this file INSTEAD OF the other GUI entry points.
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -25,6 +25,9 @@
 #include "RecordAlgorithms.h"
 #include "RecordStorage.h"
 #include "StudentManagement.h"
+#include "GuardedRecordWorkflow.h"
+#include "RequestQueue.h"
+#include "StudentFormDialog.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -57,9 +60,11 @@ enum ControlId {
     SearchLabel = 500, SearchInput, SearchMethod, SearchButton, SortLabel, SortChoice,
     GradeLabel = 520, GradeScaleChoice,
     GroupLabel = 540, GroupChoice, GroupAssign, GroupUnassign,
+    StudentAdd = 570, StudentEdit, StudentDelete, StudentUndo,
+    QueueAdd, QueueUpdate, QueueDelete, QueueNext, QueueUndo,
     MenuReload = 800, MenuExit, MenuHelp, MenuFind, MenuClearSearch, MenuDashboard, MenuStudents,
     MenuQueue, MenuReports, MenuGrading, MenuGroups, MenuInsights,
-    MenuSimulator, MenuGoals
+    MenuSimulator, MenuGoals, MenuUndo
 };
 enum class Page { Dashboard, Students, Queue, Reports, Grading, Groups, Insights, Simulator, Goals, Help };
 
@@ -168,6 +173,9 @@ public:
 private:
     StudentManagement records_;
     AcademicGroups groups_;
+    ChangeHistory history_;
+    RequestQueue queue_;
+    bool writesBlocked_ = false;
     HWND window_ = nullptr;
     std::map<int, HWND> controls_;
     HFONT normalFont_ = nullptr, boldFont_ = nullptr, titleFont_ = nullptr;
@@ -256,6 +264,13 @@ private:
             case WM_COMMAND:
                 command(LOWORD(w), HIWORD(w));
                 return 0;
+            case WM_CLOSE:
+                if (queue_.size() && MessageBoxW(hwnd,
+                     L"Pending FIFO requests have not been processed. Exit and discard them?",
+                     L"EduTrack - unsaved queue", MB_YESNO | MB_ICONQUESTION) != IDYES)
+                    return 0;
+                DestroyWindow(hwnd);
+                return 0;
             case WM_DESTROY:
                 if (normalFont_) DeleteObject(normalFont_);
                 if (boldFont_) DeleteObject(boldFont_);
@@ -320,6 +335,7 @@ private:
         append(file, MenuExit, L"Exit");
         append(edit, MenuFind, L"Find student\tCtrl+F");
         append(edit, MenuClearSearch, L"Clear search");
+        append(edit, MenuUndo, L"Undo last saved change\tCtrl+Z");
         const std::pair<int, const wchar_t*> views[] = {
             {MenuDashboard, L"Dashboard"}, {MenuStudents, L"Students"},
             {MenuQueue, L"Request Queue"}, {MenuReports, L"Reports"},
@@ -366,9 +382,10 @@ private:
         ACCEL keys[] = {
             {static_cast<BYTE>(FVIRTKEY | FCONTROL), 'R', MenuReload},
             {static_cast<BYTE>(FVIRTKEY | FCONTROL), 'F', MenuFind},
+            {static_cast<BYTE>(FVIRTKEY | FCONTROL), 'Z', MenuUndo},
             {FVIRTKEY, VK_F1, MenuHelp}
         };
-        accelerators_ = CreateAcceleratorTableW(keys, 3);
+        accelerators_ = CreateAcceleratorTableW(keys, 4);
         label(HeaderTitle, L"EduTrack");
         SendMessageW(ctl(HeaderTitle), WM_SETFONT, reinterpret_cast<WPARAM>(titleFont_), TRUE);
         label(HeaderNote, L"Student records  |  Performance insights  |  Academic planning");
@@ -404,6 +421,11 @@ private:
         SendMessageW(ctl(GradeScaleChoice), CB_SETCURSEL, 0, 0);
         label(GroupLabel, L"Assign selected student to an existing group:");
         combo(GroupChoice); button(GroupAssign, L"Assign"); button(GroupUnassign, L"Unassign");
+        button(StudentAdd, L"Add student"); button(StudentEdit, L"Edit selected");
+        button(StudentDelete, L"Delete selected"); button(StudentUndo, L"Undo");
+        button(QueueAdd, L"Queue add"); button(QueueUpdate, L"Queue update");
+        button(QueueDelete, L"Queue delete"); button(QueueNext, L"Process next");
+        button(QueueUndo, L"Undo change");
         label(SubjectLabel, L"Subject"); combo(SubjectChoice);
         label(MarkLabel, L"Hypothetical mark (0–100)"); field(ProposedMark);
         button(SimulateButton, L"Calculate result");
@@ -452,13 +474,27 @@ private:
             place(SortLabel, x + px(306) + searchW, toolbar + px(6), px(50), px(24));
             place(SortChoice, x + px(353) + searchW, toolbar,
                   std::max(px(120), content - px(353) - searchW), px(220));
-            resultY += px(53);
+            resultY += px(48);
+            const int actionWidth = (content - px(28)) / 4;
+            const int actions[] = {StudentAdd, StudentEdit, StudentDelete, StudentUndo};
+            for (int i = 0; i < 4; ++i)
+                place(actions[i], x + i * (actionWidth + px(9)), resultY,
+                      actionWidth, px(36));
+            resultY += px(48);
             const int tableWidth = content * 63 / 100;
             place(StudentTable, x, resultY, tableWidth - px(10), bottom - resultY);
             place(MainOutput, x + tableWidth + px(7), resultY,
                   content - tableWidth - px(7), bottom - resultY);
         } else {
             place(StudentTable, x, toolbar, content, bottom - toolbar);
+            if (page_ == Page::Queue) {
+                const int ids[] = {QueueAdd, QueueUpdate, QueueDelete, QueueNext, QueueUndo};
+                const int buttonW = (content - px(36)) / 5;
+                for (int i = 0; i < 5; ++i)
+                    place(ids[i], x + i * (buttonW + px(9)), toolbar,
+                          buttonW, px(36));
+                resultY += px(53);
+            }
             if (page_ == Page::Grading) {
                 place(GradeLabel, x, toolbar + px(5), px(205), px(26));
                 place(GradeScaleChoice, x + px(210), toolbar, px(285), px(250));
@@ -566,6 +602,9 @@ private:
         }
         records_ = std::move(newRecords);
         groups_ = std::move(newGroups);
+        history_.clear();
+        queue_.clear();
+        writesBlocked_ = false;
         studentSnapshot_ = std::move(currentStudents);
         groupSnapshot_ = std::move(currentGroups);
         return true;
@@ -668,7 +707,7 @@ private:
                  : L"Subject " + std::to_wstring(i + 1);
     }
     std::wstring profile(const Student* s) const {
-        if (!s) return L"No students are loaded. Add records and groups using the Phase-III console application, then reload here.";
+        if (!s) return L"No students found. Use Add student to create a record, or Reload saved files.";
         const AcademicGroup* g = groups_.groupFor(*s);
         std::wostringstream out;
         out << L"STUDENT PROFILE\r\n\r\n" << widen(s->name()) << L"  |  Roll " << s->rollNumber()
@@ -704,7 +743,7 @@ private:
             << L"4. Test alternative marks in What-if simulator.\r\n"
             << L"5. Set an achievable percentage or grade in Goal planner.\r\n\r\n"
             << L"The analytics pages never save hypothetical marks or grades.\r\n"
-            << L"Only explicitly confirmed group assignments may update academic_groups.txt.\r\n\r\n"
+            << L"Record edits are saved to students.txt; group assignment changes use academic_groups.txt.\r\n\r\n"
             << L"The overall record average is descriptive, NOT an average of a comparable group.";
         return out.str();
     }
@@ -756,18 +795,30 @@ private:
         return out.str();
     }
     std::wstring queuePage() const {
-        return L"REQUEST QUEUE\r\n\r\n"
-               L"The Phase-II application uses a FIFO request queue and stack-based undo.\r\n"
-               L"Phase III adds safeguards: edits, queued operations and undo are checked\r\n"
-               L"against verified academic-group assignments before they are accepted.\r\n\r\n"
-               L"For now use the Phase-III console to enqueue, process and undo operations.\r\n"
-               L"It has the required guarded record-edit workflow.\r\n\r\n"
-               L"The GUI does not claim to show the console's transient queue: that queue\r\n"
-               L"is kept in memory, not persisted to the two data files.\r\n\r\n"
-               L"Close this desktop before opening the console. After closing the console,\r\n"
-               L"return here and select File > Reload files.\r\n\r\n"
-               L"Future checkpoint: fully guarded student editing and FIFO controls here.";
+        std::wostringstream out;
+        out << L"FIFO REQUEST QUEUE\r\n\r\n"
+            << L"Pending requests: " << queue_.size()
+            << L"  |  Changes available to undo: " << history_.undoCount() << L"\r\n\r\n";
+        const auto pending = queue_.pending();
+        if (pending.empty()) out << L"No queued operations.\r\n";
+        for (std::size_t i = 0; i < pending.size(); ++i) {
+            const auto& item = pending[i];
+            out << i + 1 << L". "
+                << (item.type == RequestType::Add ? L"Add" :
+                    item.type == RequestType::Update ? L"Update" : L"Delete")
+                << L" | Student roll " << item.rollNumber << L"\r\n";
+        }
+        out << L"\r\nQUEUE RULES\r\n"
+            << L"Queue Add/Update opens the student form. Queue Delete uses the selected student.\r\n"
+            << L"Process next applies the oldest request first. A rejected invalid request is\r\n"
+            << L"removed; an academic-group conflict leaves it pending until resolved.\r\n"
+            << L"Undo reverses a successful change only when group assignments remain valid.\r\n"
+            << L"Successful changes are saved to students.txt. The queue and undo history\r\n"
+            << L"are not stored across reloads or restarts.\r\n\r\n"
+            << L"Do not use another editor concurrently: there is no shared file lock.";
+        return out.str();
     }
+
     std::wstring insights(const Student* s) const {
         if (!s) return L"Choose a student to inspect group-based performance.";
         const AcademicGroup* g = groups_.groupFor(*s);
@@ -847,22 +898,23 @@ private:
                      : L"Choose a student first."); break;
             case Page::Groups: display(groupOverview()); break;
             case Page::Help:
-                display(L"SAFE PHASE-III WORKFLOW\r\n\r\n"
-                  L"Manage students, queue, undo and group definitions in the Phase-III console.\r\n"
-                  L"Close the console before launching or reloading this desktop workspace.\r\n"
-                  L"This GUI may ONLY assign/unassign existing academic groups after file checks.\r\n"
-                  L"All simulations and insights remain read-only.\r\n\r\n"
-                  L"A .tmp or .bak file may indicate interrupted saving. The workspace blocks loading\r\n"
-                  L"until such recovery files are inspected. A corrupted or inconsistent group file\r\n"
-                  L"also blocks loading rather than silently dropping assignments.\r\n\r\n"
-                  L"Comparative rankings require an explicit group with at least two valid members.\r\n"
-                  L"Insights exclude the selected student from peer averages.\r\n"
-                  L"Goal suggestions only raise hypothetical marks, up to the given ceilings.\r\n\r\n"
-                  L"Grades use an illustrative GEU distance-learning reference, NOT verified B.Tech rules.\r\n"
-                  L"No machine learning, GPA or SGPA prediction is performed.\r\n\r\n"
-                  L"Student records: students.txt; metadata: academic_groups.txt.\r\n"
-                  L"External programs or two simultaneous editors are not safe: the files\r\n"
-                  L"are separate and are not protected by a shared transactional lock."); break;
+                display(L"PHASE-III WORKFLOW AND DATA SAFETY\r\n\r\n"
+                  L"Students: Add, edit or delete a record using the table and separate form.\r\n"
+                  L"Assigned students cannot be renamed, moved to a different semester\r\n"
+                  L"or deleted while that would invalidate their academic group.\r\n"
+                  L"Unassign first, or keep branch/semester/subject count unchanged.\r\n\r\n"
+                  L"Request Queue: stage Add, Update or Delete; process in FIFO order.\r\n"
+                  L"Academic-group conflicts leave requests pending. Invalid requests are rejected.\r\n"
+                  L"Undo is in the Students page, Queue page or Edit > Undo (Ctrl+Z).\r\n"
+                  L"Queue and undo history are only in memory. Reload clears both.\r\n\r\n"
+                  L"Academic Groups: assign and unassign from existing groups. Use the\r\n"
+                  L"console to define new groups. Analytics simulations never save marks.\r\n\r\n"
+                  L"Every actual record save checks both files for external modifications,\r\n"
+                  L"and refuses .tmp or .bak recovery files. Two processes are NOT protected\r\n"
+                  L"by a shared lock; do not run the console and GUI concurrently.\r\n"
+                  L"A failed file verification disables further writes until Reload succeeds.\r\n\r\n"
+                  L"Only the illustrative grading scales are available; these are NOT\r\n"
+                  L"verified B.Tech grade policies, and no ML or SGPA is calculated."); break;
         }
     }
     void showPage(Page next) {
@@ -871,8 +923,11 @@ private:
         const bool list = next == Page::Students, grade = next == Page::Grading,
                    group = next == Page::Groups;
         ShowWindow(ctl(StudentTable), list ? SW_SHOW : SW_HIDE);
-        for (int id : {SearchLabel, SearchInput, SearchMethod, SearchButton, SortLabel, SortChoice})
+        for (int id : {SearchLabel, SearchInput, SearchMethod, SearchButton, SortLabel, SortChoice,
+                       StudentAdd, StudentEdit, StudentDelete, StudentUndo})
             ShowWindow(ctl(id), list ? SW_SHOW : SW_HIDE);
+        for (int id : {QueueAdd, QueueUpdate, QueueDelete, QueueNext, QueueUndo})
+            ShowWindow(ctl(id), next == Page::Queue ? SW_SHOW : SW_HIDE);
         for (int id : {GradeLabel, GradeScaleChoice})
             ShowWindow(ctl(id), grade ? SW_SHOW : SW_HIDE);
         for (int id : {GroupLabel, GroupChoice, GroupAssign, GroupUnassign})
@@ -889,8 +944,8 @@ private:
         };
         const wchar_t* descriptions[] = {
             L"Class overview and academic analysis tools.",
-            L"Phase-II-style student table: find and sort records, then inspect the selected profile.",
-            L"FIFO requests and undo use the coordinated console until GUI editing is safely integrated.",
+            L"Manage student records safely, with searchable table and edit form.",
+            L"In-memory FIFO requests, guarded processing and undo of saved student changes.",
             L"Selected student and descriptive class reports (not comparable-group means).",
             L"View both illustrative grading schemes; select one to change the displayed calculations.",
             L"Inspect named subjects; safely assign or unassign the selected student to an existing group.",
@@ -910,7 +965,7 @@ private:
             text(nav[n], std::wstring(n == i ? L"> " : L"   ") + names[n]);
         RECT rect{}; GetClientRect(window_, &rect); arrange(rect.right, rect.bottom);
         renderCurrent();
-        status(L"Academic calculations do not change marks; group assignments require saving.");
+        status(L"Record changes are saved after safety checks; calculations never change actual marks.");
     }
     void simulate() {
         const Student* s = selected();
@@ -1027,6 +1082,139 @@ private:
         status(std::wstring(binary ? L"Binary" : L"Linear") + L" search found roll " +
                std::to_wstring(roll) + L".");
     }
+    bool filesFresh(std::string& error) const {
+        error.clear();
+        if (writesBlocked_) {
+            error = "A previous write could not be verified. Inspect files and Reload first.";
+            return false;
+        }
+        for (const char* name : {"students.txt.tmp", "students.txt.bak",
+                                 "academic_groups.txt.tmp", "academic_groups.txt.bak"}) {
+            std::error_code ec;
+            if (std::filesystem::exists(name, ec) || ec) {
+                error = "Recovery file exists or inspection failed: " + std::string(name);
+                return false;
+            }
+        }
+        std::optional<std::string> students, groups;
+        if (!snapshot("students.txt", students, error) ||
+            !snapshot("academic_groups.txt", groups, error)) return false;
+        if (students != studentSnapshot_ || groups != groupSnapshot_) {
+            error = "Saved student/group files changed externally. Reload before editing.";
+            return false;
+        }
+        return true;
+    }
+    bool commitRecords(StudentManagement& nextRecords, ChangeHistory& nextHistory,
+                       RequestQueue& nextQueue, int selectedRoll) {
+        std::string error;
+        if (!filesFresh(error)) {
+            warning(L"Record change refused: " + widen(error)); return false;
+        }
+        if (!groups_.consistentWith(nextRecords)) {
+            warning(L"Change would invalidate an academic-group assignment. Unassign first.");
+            return false;
+        }
+        if (!RecordStorage::save("students.txt", nextRecords, error)) {
+            warning(L"Could not save student records. Existing in-memory records remain unchanged. "
+                    + widen(error)); return false;
+        }
+        // The on-disk save has succeeded. Keep memory aligned even if the
+        // subsequent readback fails; prevent more writes until Reload succeeds.
+        records_ = std::move(nextRecords);
+        history_ = std::move(nextHistory);
+        queue_ = std::move(nextQueue);
+        std::string checkError;
+        std::optional<std::string> saved;
+        if (!snapshot("students.txt", saved, checkError)) {
+            writesBlocked_ = true;
+            warning(L"Records saved but could not be verified. Inspect saved files before Reload. "
+                    + widen(checkError));
+            fillStudents(selectedRoll); renderCurrent(); return false;
+        }
+        studentSnapshot_ = std::move(saved);
+        fillStudents(selectedRoll);
+        renderCurrent();
+        status(L"Student records saved. Queue and undo remain in memory until exit/reload.");
+        if (!error.empty()) {
+            writesBlocked_ = true; // .bak cleanup warning: further edits are unsafe.
+            warning(L"Records were saved, but cleanup needs attention: " + widen(error));
+        }
+        return true;
+    }
+    void changeStudent(GuardedRecordWorkflow::Change change) {
+        const Student* chosen = selected();
+        const bool isAdd = change == GuardedRecordWorkflow::Change::Add;
+        const bool isUndo = change == GuardedRecordWorkflow::Change::Undo;
+        if (!isAdd && !isUndo && !chosen) { warning(L"Choose a student first."); return; }
+        const int roll = chosen ? chosen->rollNumber() : 0;
+        std::optional<Student> replacement;
+        if (isAdd || change == GuardedRecordWorkflow::Change::Update) {
+            replacement = StudentFormDialog::show(window_, GetModuleHandleW(nullptr), dpi_,
+                  isAdd ? std::optional<Student>{} : std::optional<Student>{*chosen}, !isAdd);
+            if (!replacement) return;
+        }
+        if (change == GuardedRecordWorkflow::Change::Delete &&
+            MessageBoxW(window_, L"Permanently delete the selected student record?\nYou can use Undo during this session.",
+                        L"Confirm student deletion", MB_YESNO | MB_ICONWARNING) != IDYES) return;
+        StudentManagement nextRecords = records_;
+        ChangeHistory nextHistory = history_;
+        RequestQueue nextQueue = queue_;
+        const auto result = GuardedRecordWorkflow::apply(change, roll, replacement,
+                                                         groups_, nextRecords, nextHistory);
+        if (result != GuardedRecordWorkflow::Status::Applied) {
+            warning(result == GuardedRecordWorkflow::Status::GroupConflict
+                ? L"Blocked by an academic-group assignment. Unassign first."
+                : result == GuardedRecordWorkflow::Status::NoHistory
+                ? L"No successful student change to undo."
+                : L"Invalid, duplicate or missing student record; no changes saved.");
+            return;
+        }
+        const int selectRoll = replacement ? replacement->rollNumber() :
+                               change == GuardedRecordWorkflow::Change::Delete ? 0 : roll;
+        commitRecords(nextRecords, nextHistory, nextQueue, selectRoll);
+    }
+    void enqueue(RequestType type) {
+        const Student* chosen = selected();
+        if (type != RequestType::Add && !chosen) { warning(L"Select a student first."); return; }
+        std::optional<Student> proposal;
+        if (type == RequestType::Add || type == RequestType::Update) {
+            proposal = StudentFormDialog::show(window_, GetModuleHandleW(nullptr), dpi_,
+                  type == RequestType::Update ? std::optional<Student>{*chosen}
+                                              : std::optional<Student>{},
+                  type == RequestType::Update);
+            if (!proposal) return;
+        }
+        if (type == RequestType::Add) queue_.enqueueAdd(*proposal);
+        else if (type == RequestType::Update) queue_.enqueueUpdate(*proposal);
+        else queue_.enqueueDelete(chosen->rollNumber());
+        renderCurrent();
+        status(L"Request queued in memory. Process Next applies the oldest request.");
+    }
+    void processQueued() {
+        std::string error;
+        if (!filesFresh(error)) { warning(L"Queue processing refused: " + widen(error)); return; }
+        StudentManagement nextRecords = records_;
+        ChangeHistory nextHistory = history_;
+        RequestQueue nextQueue = queue_;
+        const auto outcome = GuardedRecordWorkflow::processNext(groups_, nextRecords,
+                                                               nextHistory, nextQueue);
+        if (outcome == GuardedRecordWorkflow::Status::QueueEmpty) {
+            warning(L"No pending requests."); return;
+        }
+        if (outcome == GuardedRecordWorkflow::Status::GroupConflict) {
+            warning(L"Request blocked by academic-group assignment. It remains first in the queue.");
+            return;
+        }
+        if (outcome == GuardedRecordWorkflow::Status::RejectedRemoved) {
+            queue_ = std::move(nextQueue);
+            renderCurrent();
+            status(L"Invalid or duplicate request rejected and removed. Student records unchanged.");
+            return;
+        }
+        const int keep = selected() ? selected()->rollNumber() : 0;
+        commitRecords(nextRecords, nextHistory, nextQueue, keep);
+    }
     void changeGroup(bool assign) {
         const Student* current = selected();
         if (!current) { warning(L"Choose a student first."); return; }
@@ -1049,6 +1237,7 @@ private:
                  : L"Remove this student's academic-group assignment? Stored marks will not change.",
                  L"Confirm academic group change", MB_YESNO | MB_ICONQUESTION) != IDYES)
             return;
+        if (writesBlocked_) { warning(L"Editing disabled until saved files are checked and reloaded."); return; }
         // Reject any pending recovery files; do not write over an interrupted save.
         for (const char* name : {"students.txt.tmp", "students.txt.bak",
                                  "academic_groups.txt.tmp", "academic_groups.txt.bak"}) {
@@ -1097,6 +1286,9 @@ private:
             warning(L"Assignment saved, but storage reported: " + widen(error));
     }
     void reload() {
+        if ((queue_.size() || history_.undoCount()) &&
+            MessageBoxW(window_, L"Reloading will clear pending requests and undo history. Continue?",
+                 L"Confirm reload", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
         const int previous = selected() ? selected()->rollNumber() : 0;
         std::string error;
         if (!loadFiles(error)) { warning(L"Reload refused; existing in-memory records remain intact.\n" + widen(error)); return; }
@@ -1148,12 +1340,21 @@ private:
             case SearchButton: findRecord(); break;
             case GroupAssign: changeGroup(true); break;
             case GroupUnassign: changeGroup(false); break;
+            case StudentAdd: changeStudent(GuardedRecordWorkflow::Change::Add); break;
+            case StudentEdit: changeStudent(GuardedRecordWorkflow::Change::Update); break;
+            case StudentDelete: changeStudent(GuardedRecordWorkflow::Change::Delete); break;
+            case StudentUndo: case QueueUndo: case MenuUndo:
+                changeStudent(GuardedRecordWorkflow::Change::Undo); break;
+            case QueueAdd: enqueue(RequestType::Add); break;
+            case QueueUpdate: enqueue(RequestType::Update); break;
+            case QueueDelete: enqueue(RequestType::Delete); break;
+            case QueueNext: processQueued(); break;
             case SimulateButton: simulate(); break;
             case PlanButton: plan(); break;
             case MenuHelp: showPage(Page::Help); break;
             case MenuFind: showPage(Page::Students); SetFocus(ctl(SearchInput)); break;
             case MenuClearSearch: text(SearchInput, L""); status(L"Search field cleared."); break;
-            case MenuExit: DestroyWindow(window_); break;
+            case MenuExit: SendMessageW(window_, WM_CLOSE, 0, 0); break;
         }
     }
 };
