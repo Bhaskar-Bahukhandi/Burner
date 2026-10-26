@@ -309,3 +309,56 @@ clip or overprint. Stage 3F2 will address safe group-editing controls and the
 remaining Windows visual tests. The default GitHub `main` and older Phase-II
 GUI remain the fallback.
 
+
+## Phase III Stage 3F2 — Phase-II-style hybrid desktop (review build)
+
+The new **`gui/Phase3HybridGUI.cpp`** is an optional third Windows entry point.
+It borrows the Phase-II desktop's familiar sidebar, native File/Edit/View/Help
+menus and Students table, while keeping the Stage-III Dashboard, Insights,
+What-if Simulator, Goal Planner and Academic Groups.
+
+**Windows PowerShell, from the `EduTrack` directory (MinGW-w64):**
+
+```powershell
+g++ -std=c++17 -Wall -Wextra -pedantic -municode -mwindows -Iinclude .\gui\Phase3HybridGUI.cpp (Get-ChildItem src -Filter *.cpp | Where-Object Name -ne 'main.cpp' | ForEach-Object FullName) -lcomctl32 -o EduTrackHybrid.exe
+.\EduTrackHybrid.exe
+```
+
+Compile **only one GUI source** at a time: `WindowsGUI.cpp` (Phase II),
+`Phase3GUI.cpp` (working read-only Stage 3F1 preview), or
+`Phase3HybridGUI.cpp` (Stage 3F2 hybrid). The console build is unchanged.
+
+In the hybrid GUI:
+
+- **Students** displays a sortable student table with a profile pane. Find by
+  roll number using either linear or binary search. It does **not** edit marks.
+- **Request Queue** explains the existing FIFO/undo workflow; queue processing,
+  record CRUD and undo are still available in the **Phase-III console only**.
+- **Reports** displays class statistics and a selected student report; the
+  overall class average is not a comparable-group average.
+- **Grading** switches between two illustrative scales. This affects displayed
+  grades, simulations and goals, never stored marks. The GEU reference is not
+  confirmed as the actual B.Tech grading policy.
+- **Academic Groups** displays subject definitions and lets you **assign or
+  unassign a selected student to an existing group**. A confirmation is required.
+  The UI checks group compatibility and validates that neither saved file has
+  changed since it was loaded. A successful action writes **only**
+  `academic_groups.txt` with temporary/backup recovery safeguards. New group
+  definitions still require the console.
+- **Academic Insights, What-if Simulator, Goal Planner** use the existing
+  read-only Phase-III engines. A hypothetical result never changes a record.
+- Native menu shortcuts: Ctrl+R reload, Ctrl+F find, F1 help.
+
+**Important safety limitations:**
+
+- This is **not an atomic two-file database**. There is no shared lock between
+  this GUI and the console/other programs. Close one before launching the other;
+  back up both `students.txt` and `academic_groups.txt` before editing groups.
+- If files changed externally or `.tmp`/`.bak` recovery files are present,
+  group editing is refused. Inspect recovery files and use Reload before retrying.
+- Student CRUD/queue operations cannot yet be performed from the hybrid GUI;
+  they require coordinated mutation safeguards and remain a later GUI milestone.
+- Stage 3F2 passed portable C++ integration/sanitizer checks and static GUI
+  layout/source checks. **It has not yet been compiled or visually exercised on
+  Windows in this environment.** Test on your Windows laptop before merging the
+  review PR. The already-tested Stage 3F1 GUI remains intact as a fallback.
