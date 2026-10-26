@@ -218,3 +218,47 @@ stale assignments and unchanged records; console group setup, insight
 printing, rank simulation and save/restart. The Stage 3D insight controls are
 **not yet connected to the Windows GUI**. The Phase-II `main` branch remains
 the fallback while Phase-III branches are under review.
+
+## Phase III Stage 3E — Improvement Goal Planner (console)
+
+**Menu option 27** computes a hypothetical plan for one student. It works with
+or without an academic-group assignment; assigned students see their verified
+subject names, while others see numbered subjects. Choose either:
+
+- **Percentage target:** an exact percentage from 0 to 100 with at most two
+  decimal places (for example `75.25`). The smallest integer total that meets
+  that percentage is calculated using integer arithmetic. The displayed
+  percentage is rounded for readability, but the decision is **not** rounded.
+- **Letter-grade target:** one of the letter grades available under the currently
+  selected *illustrative* grading scheme (option 20). The F grade is not offered
+  as an improvement target. The reference O threshold is strictly **above 85%**;
+  for example, with five subjects O requires at least **426/500**, not 425.
+
+You can accept a limit of 100 for each subject or enter **hypothetical subject
+ceilings** between the student's current marks and 100. If the goal exceeds the
+sum of these ceilings, EduTrack clearly reports that it is **unreachable under
+those ceilings**, shows the maximum obtainable total and the shortfall, and
+prints an illustration using the chosen ceilings. If the current total already
+meets the target, no mark increase is proposed.
+
+For reachable targets, the planner proposes one valid distribution of the
+minimum additional marks. Its simple, deterministic rule is to add marks to the
+**currently lowest hypothetical subject** with remaining capacity, breaking
+same-mark ties by original subject order. This is a mathematical illustration,
+**not** an optimization for learning time, academic difficulty, predicted
+performance, future exams or study effort. All subjects are equally weighted
+and scored out of 100, consistent with the existing student model. There is no
+SGPA or officially verified B.Tech course grading calculation.
+
+**Example:** marks `80, 45, 75, 70, 60` sum to `330/500 = 66%`. A target of
+`75%` requires at least `375` marks: an additional **45** marks overall. A
+`75.01%` target requires `376/500` (not `375`). Both results are simulations;
+no real mark, undo history, queue, `students.txt` or `academic_groups.txt` is
+changed when using option 27.
+
+**Validation:** strict GCC and Clang C++17 builds; a sanitizer-backed suite
+covering exact percentage thresholds, impossible ceilings, grades under both
+scales, the special O boundary, 0/100 limits, invalid data and read-only console
+interaction. A native Win32 GUI implementation of Stage 3E is still pending.
+The Phase-II `main` branch remains the fallback; earlier Phase-III checkpoints
+are under review.
