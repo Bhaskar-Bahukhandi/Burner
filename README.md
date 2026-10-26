@@ -417,3 +417,27 @@ check student form, both data files, group-conflict behavior, queue, undo,
 resize, navigation, and visual rendering on an actual Windows PC before
 merging its draft PR. The older Stage 3F2 revision remains available through
 Git history.
+
+## Phase III Stage 3F4 — Hybrid GUI hardening (review build)
+
+This checkpoint keeps the same 37-file architecture and repairs the existing
+hybrid interface without adding another GUI entry point:
+
+- The student dropdown and highlighted table row now follow the **same record**
+  after clicking a row, choosing from the dropdown, searching, sorting or reload.
+- All six table columns resize with the available list width. The student
+  profile retains full details next to the table.
+- Escape cancels the modal Add/Edit/Queue form, including when a field is active;
+  the form's existing Save and Cancel buttons remain.
+- Failed student/group saves, unreadable post-save files and backup-cleanup
+  warnings disable further writes until files are inspected and Reload succeeds.
+  A successful saved change remains in memory even if its verification fails.
+- Dashboard and Insights instructions accurately name the present navigation
+  and the existing GUI assignment workflow.
+
+**Testing:** Portable C++17 GCC/Clang builds and domain-level regression tests
+can run outside Windows. The Win32-specific GUI must still be built and
+interactively tested on Windows, including minimum-size/maximized layout,
+keyboard operation, all CRUD/queue/undo actions, and interrupted-save recovery.
+No change to the `EDUTRACK 1` record format or the academic-group sidecar format.
+The Stage 3F3 source remains recoverable from Git history.

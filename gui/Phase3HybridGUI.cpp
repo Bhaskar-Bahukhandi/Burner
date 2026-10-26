@@ -482,7 +482,20 @@ private:
                       actionWidth, px(36));
             resultY += px(48);
             const int tableWidth = content * 63 / 100;
-            place(StudentTable, x, resultY, tableWidth - px(10), bottom - resultY);
+            const int tablePixels = tableWidth - px(10);
+            place(StudentTable, x, resultY, tablePixels, bottom - resultY);
+            // Fit all six columns within the available table width. At small
+            // windows the profile to the right retains complete field labels.
+            const int columnPixels = std::max(px(330), tablePixels -
+                GetSystemMetrics(SM_CXVSCROLL) - px(6));
+            const int ratios[] = {12, 29, 22, 13, 14};
+            int usedPixels = 0;
+            for (int i = 0; i < 5; ++i) {
+                const int size = columnPixels * ratios[i] / 100;
+                ListView_SetColumnWidth(ctl(StudentTable), i, size);
+                usedPixels += size;
+            }
+            ListView_SetColumnWidth(ctl(StudentTable), 5, columnPixels - usedPixels);
             place(MainOutput, x + tableWidth + px(7), resultY,
                   content - tableWidth - px(7), bottom - resultY);
         } else {
@@ -637,6 +650,23 @@ private:
         }
         SendMessageW(ctl(GroupChoice), CB_SETCURSEL, index, 0);
     }
+    // Keep the dropdown and table selection synchronized. A previous version
+    // could show student B in the detail pane while highlighting student A.
+    void selectTableRoll(int roll) {
+        HWND table = ctl(StudentTable);
+        if (!table) return;
+        updating_ = true; // Suppress re-entrant LVN_ITEMCHANGED notifications.
+        ListView_SetItemState(table, -1, 0, LVIS_SELECTED | LVIS_FOCUSED);
+        for (std::size_t i = 0; i < tableRolls_.size(); ++i) {
+            if (tableRolls_[i] != roll) continue;
+            ListView_SetItemState(table, static_cast<int>(i),
+                                  LVIS_SELECTED | LVIS_FOCUSED,
+                                  LVIS_SELECTED | LVIS_FOCUSED);
+            ListView_EnsureVisible(table, static_cast<int>(i), FALSE);
+            break;
+        }
+        updating_ = false;
+    }
     void fillStudents(int desiredRoll = 0) {
         updating_ = true;
         SendMessageW(ctl(StudentChoice), CB_RESETCONTENT, 0, 0);
@@ -674,6 +704,7 @@ private:
         if (!selectedRolls_.empty() && selectIndex == 0) selectIndex = 1;
         SendMessageW(ctl(StudentChoice), CB_SETCURSEL, selectIndex, 0);
         updating_ = false;
+        if (selectIndex > 0) selectTableRoll(selectedRolls_[static_cast<std::size_t>(selectIndex - 1)]);
         fillSubjects();
         syncSelectedGroup();
     }
@@ -681,6 +712,7 @@ private:
         for (std::size_t i = 0; i < selectedRolls_.size(); ++i) {
             if (selectedRolls_[i] != roll) continue;
             SendMessageW(ctl(StudentChoice), CB_SETCURSEL, i + 1, 0);
+            selectTableRoll(roll);
             fillSubjects();
             syncSelectedGroup();
             renderCurrent();
@@ -738,7 +770,7 @@ private:
         if (average) out << L"Overall record average: " << fixed(*average) << L"%\r\n";
         out << L"\r\nHOW TO USE THIS WORKSPACE\r\n\r\n"
             << L"1. Choose a student in the upper-right selector.\r\n"
-            << L"2. Open Student profiles to see marks and stored subjects.\r\n"
+            << L"2. Open Students to see marks and named subjects.\r\n"
             << L"3. Open Academic insights to compare with assigned peers.\r\n"
             << L"4. Test alternative marks in What-if simulator.\r\n"
             << L"5. Set an achievable percentage or grade in Goal planner.\r\n\r\n"
@@ -823,7 +855,8 @@ private:
         if (!s) return L"Choose a student to inspect group-based performance.";
         const AcademicGroup* g = groups_.groupFor(*s);
         if (!g) return L"This student has no valid academic-group assignment.\r\n\r\n"
-                       L"Assign them to a matching named-subject group in the console first.";
+                       L"Use Academic Groups to assign a matching existing group, or\r\n"
+                       L"create a new group definition in the console first.";
         const auto r = AcademicInsights::analyze(records_, groups_, s->rollNumber());
         if (!r) return L"No comparable peers were found in this group. Insights require at least two valid assigned students.";
         std::wostringstream out;
@@ -1071,14 +1104,6 @@ private:
             : RecordAlgorithms::linearSearch(records_.allStudents(), roll);
         if (!found) { warning(L"No record matches the entered roll number."); return; }
         selectRoll(roll);
-        for (std::size_t i = 0; i < tableRolls_.size(); ++i) {
-            if (tableRolls_[i] == roll) {
-                ListView_SetItemState(ctl(StudentTable), static_cast<int>(i),
-                    LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
-                ListView_EnsureVisible(ctl(StudentTable), static_cast<int>(i), FALSE);
-                break;
-            }
-        }
         status(std::wstring(binary ? L"Binary" : L"Linear") + L" search found roll " +
                std::to_wstring(roll) + L".");
     }
@@ -1116,7 +1141,10 @@ private:
             return false;
         }
         if (!RecordStorage::save("students.txt", nextRecords, error)) {
-            warning(L"Could not save student records. Existing in-memory records remain unchanged. "
+            // An interrupted replacement might leave a recovery file. Never
+            // allow another edit without reloading and inspecting storage.
+            writesBlocked_ = true;
+            warning(L"Student save failed. Inspect files and Reload before further edits. "
                     + widen(error)); return false;
         }
         // The on-disk save has succeeded. Keep memory aligned even if the
@@ -1139,6 +1167,7 @@ private:
         if (!error.empty()) {
             writesBlocked_ = true; // .bak cleanup warning: further edits are unsafe.
             warning(L"Records were saved, but cleanup needs attention: " + widen(error));
+            return false;
         }
         return true;
     }
@@ -1266,7 +1295,8 @@ private:
             return;
         }
         if (!AcademicGroupStorage::save("academic_groups.txt", records_, proposed, error)) {
-            warning(L"Could not save assignment. Inspect any recovery files before retrying. "
+            writesBlocked_ = true;
+            warning(L"Could not save assignment. Inspect saved files and Reload before retrying. "
                     + widen(error));
             return;
         }
@@ -1275,15 +1305,20 @@ private:
         groups_ = std::move(proposed);
         std::optional<std::string> saved;
         if (!snapshot("academic_groups.txt", saved, error)) {
-            warning(L"Group was saved but could not be verified. Close and inspect the file.");
+            writesBlocked_ = true;
+            warning(L"Group was saved but could not be verified. Inspect files and Reload. "
+                    + widen(error));
             return;
         }
         groupSnapshot_ = std::move(saved);
         fillStudents(roll);
         renderCurrent();
         status(L"Academic-group assignment saved. Student marks were not changed.");
-        if (!error.empty())
-            warning(L"Assignment saved, but storage reported: " + widen(error));
+        if (!error.empty()) {
+            writesBlocked_ = true;
+            warning(L"Assignment saved, but storage reported: " + widen(error) +
+                    L" Inspect files and Reload before another edit.");
+        }
     }
     void reload() {
         if ((queue_.size() || history_.undoCount()) &&
@@ -1299,6 +1334,8 @@ private:
     }
     void command(int id, int notification) {
         if (id == StudentChoice && notification == CBN_SELCHANGE && !updating_) {
+            const Student* student = selected();
+            selectTableRoll(student ? student->rollNumber() : 0);
             fillSubjects(); syncSelectedGroup(); renderCurrent(); return;
         }
         if (id == GoalMode && notification == CBN_SELCHANGE) {
