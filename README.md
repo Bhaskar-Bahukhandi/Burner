@@ -362,3 +362,58 @@ In the hybrid GUI:
   layout/source checks. **It has not yet been compiled or visually exercised on
   Windows in this environment.** Test on your Windows laptop before merging the
   review PR. The already-tested Stage 3F1 GUI remains intact as a fallback.
+
+## Phase III Stage 3F3 — Guarded student editor and FIFO controls (review build)
+
+Stage 3F3 extends the optional **`gui/Phase3HybridGUI.cpp`** Windows application.
+The familiar table, reports, grading reference and Phase-III academic tools remain.
+This checkpoint adds the record-management controls previously available only in
+our console workflow. The other two GUI entry points and the Phase-II code remain
+available unchanged.
+
+**Build in Windows PowerShell** from this project's `EduTrack` folder:
+
+```powershell
+g++ -std=c++17 -Wall -Wextra -pedantic -municode -mwindows -Iinclude .\gui\Phase3HybridGUI.cpp (Get-ChildItem src -Filter *.cpp | Where-Object Name -ne 'main.cpp' | ForEach-Object FullName) -lcomctl32 -o EduTrackHybrid.exe
+.\EduTrackHybrid.exe
+```
+
+- **Students:** Select a row or choose a student, then Add, Edit, Delete or Undo.
+  Add/Edit opens a separate form accepting roll, name, branch, semester and a
+  comma-separated list of 1–20 whole-number subject marks (0–100 each).
+- **Request Queue:** Queue Add/Update/Delete, inspect their FIFO order, and use
+  Process Next. Successful operations are saved immediately to `students.txt`;
+  duplicate/missing/invalid requests are removed and reported. A request that
+  conflicts with a valid academic-group assignment is **not consumed**.
+- **Undo:** Ctrl+Z, Edit > Undo, or the Students/Queue Undo button attempts to
+  restore the previous record snapshot. It refuses an undo that would break
+  current academic-group assignments.
+- **Groups:** Continue to assign/unassign already-defined groups in the desktop.
+  Creating group definitions remains in the Phase-III console. Changes in group
+  definitions are kept in `academic_groups.txt`, separate from student marks.
+
+The portable `GuardedRecordWorkflow.*` module applies proposed CRUD, undo and
+queue operations to **copies** and checks 
+`AcademicGroups::consistentWith()` before accepting them. The console still
+uses its pre-existing guarded implementation. The desktop then checks both
+saved files against snapshots taken at load and checks for `.tmp` / `.bak`
+recovery files before saving successful record changes. Saving uses the existing
+`RecordStorage` temporary-file/backup method. After each successful write the
+in-memory records, table and file snapshot are refreshed together; if save
+verification fails, further edits are blocked until files are inspected/reloaded.
+
+**Important limitations:** This is not a cross-process lock or an atomic
+transaction covering `students.txt` and `academic_groups.txt`. Do not open the
+console and either GUI at the same time or edit the files externally while the
+GUI is running. Back up *both* data files before testing. Student roll/name are
+not immutable institution-issued identities. Queue entries and undo history
+exist **only in memory**; reloading discards both with confirmation. Hypothetical
+academic simulations do **not** change real marks. Grade scales remain
+illustrative and do not establish official GEU B.Tech grading policy.
+
+**Release status:** Portable source and workflow regression tests may pass on
+Linux; these are not equivalent to a Win32 build. Compile this new GUI and
+check student form, both data files, group-conflict behavior, queue, undo,
+resize, navigation, and visual rendering on an actual Windows PC before
+merging its draft PR. The older Stage 3F2 revision remains available through
+Git history.
