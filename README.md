@@ -110,3 +110,17 @@ The console application builds using C++17 on GCC and Clang and its data functio
 - Save, close and reopen; verify the same marks and records load.
 - Test the GUI on the Windows demonstration laptop and keep the console version as a fallback.
 - Replace the placeholder repository/commit entries and old progress figures in the Phase-II report with accurate information.
+
+## Phase III development (separate branch)
+
+The first Phase-III module is `ImprovementSimulator.*`. It calculates the effect of
+changing one subject mark **hypothetically**, including the total, average percentage
+and letter grade under the selected illustrative grading scheme. Subject numbers
+start at 1. Invalid marks or subject numbers are rejected. A simulation never changes
+the stored `Student` object, `students.txt`, the undo stack or queued requests.
+
+The module is not connected to the console or GUI yet. The next checkpoints will
+introduce subject identities and comparable academic groups, followed by a
+rank-aware simulator, explainable insights and a goal planner. Real marks must not
+change when trying hypothetical values. The original Phase-II application remains
+the fallback until those features pass integration tests.
