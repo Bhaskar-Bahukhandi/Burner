@@ -183,3 +183,38 @@ This checkpoint's console and academic modules passed strict GCC and Clang
 compilation, sanitizer-level module checks and scripted save/reload tests on Linux.
 The **Win32 GUI additions for Phase III are still pending** and must be built
 and visually checked on Windows before use. Keep Phase-II `main` as the fallback.
+
+## Phase III Stage 3D — Academic Insights (console)
+
+The new **option 26, View group-based academic insights**, reads the selected
+student's existing marks and compares each named subject with **other students
+explicitly assigned to the same valid academic group**. It requires at least
+one other comparable student. No group is inferred from branch or semester
+alone.
+
+For each subject, EduTrack prints the mark, the average for the *other*
+students, and the difference in marks (`student mark - peer average`). It
+identifies the largest negative gap and largest positive gap, if any. Equal
+gaps are reported in the original subject order. It also displays the
+student's percentage, the other students' average percentage and the current
+group rank using the existing sorting rules. Unrelated or unassigned students
+are excluded. When fewer than three other students are available, the report
+warns that the sample is small.
+
+These are **descriptive calculations only**. A low mark or negative group gap
+cannot establish why somebody performed differently, and the report does not
+predict future results or automatically assign a study plan. All insights are
+read-only; existing student and academic-group file formats are unchanged.
+
+### Example
+
+If a student scores 40 in Mathematics and the only comparable peer scores 80,
+the subject gap is `40 - 80 = -40` marks. This is described as 40 marks below
+that peer's average, **not** a prediction that 40 marks can be recovered.
+
+**Tested:** strict GCC/Clang console compilation; AddressSanitizer and
+UndefinedBehaviorSanitizer checks for peer exclusion, group isolation, ties,
+stale assignments and unchanged records; console group setup, insight
+printing, rank simulation and save/restart. The Stage 3D insight controls are
+**not yet connected to the Windows GUI**. The Phase-II `main` branch remains
+the fallback while Phase-III branches are under review.
