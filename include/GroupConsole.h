@@ -8,7 +8,7 @@
 #include <string>
 
 namespace GroupConsole {
-// Choices 21-25. Metadata changes save immediately, only on success.
+// Choices 21-27. Metadata changes save immediately, only on success.
 // False means input ended; true means the command was handled.
 bool handle(int choice, const StudentManagement& records, AcademicGroups& groups,
             const std::string& filename, AcademicProcessing::GradeScale scale,

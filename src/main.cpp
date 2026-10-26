@@ -337,6 +337,7 @@ void showMenu() {
               << "24. List academic groups and subjects\n"
               << "25. Simulate mark and comparable group rank\n"
               << "26. View group-based academic insights\n"
+              << "27. Plan a hypothetical percentage or grade goal\n"
               << "0. Save and exit\n";
 }
 }  // namespace
@@ -413,7 +414,7 @@ int main() {
 
     while (true) {
         showMenu();
-        auto choice = readNumber("Choice: ", 0, 26);
+        auto choice = readNumber("Choice: ", 0, 27);
         if (!choice || *choice == 0) {
             if (queue.size() && choice &&
                 !confirmation("Pending requests will be discarded without processing.")) {
@@ -433,7 +434,7 @@ int main() {
             }
             break;
         }
-        if (*choice >= 21 && *choice <= 26) {
+        if (*choice >= 21 && *choice <= 27) {
             // Metadata saves immediately. First flush pending marks to avoid
             // persisting assignments for students absent from students.txt.
             if ((*choice == 21 || *choice == 22 || *choice == 23) && dirty) {
