@@ -262,3 +262,50 @@ scales, the special O boundary, 0/100 limits, invalid data and read-only console
 interaction. A native Win32 GUI implementation of Stage 3E is still pending.
 The Phase-II `main` branch remains the fallback; earlier Phase-III checkpoints
 are under review.
+
+## Phase III desktop preview — Stage 3F1 (read-only)
+
+Stage 3F1 adds a **separate** desktop program in `gui/Phase3GUI.cpp`. This is the
+new academic workspace with **Dashboard**, **Student profiles**, **Academic insights**,
+**What-if simulator**, **Goal planner**, **Academic groups** and **Help** navigation.
+It uses the same Stage 3C–3E calculations as the console. It is intentionally
+**read-only**: it does not create/edit/delete records or assignments and does not
+write `students.txt` or `academic_groups.txt`. This prevents the older GUI's
+uncoordinated record edits from invalidating the new academic-group sidecar.
+
+**Windows PowerShell — Phase III preview (MinGW-w64):**
+
+```powershell
+g++ -std=c++17 -Wall -Wextra -pedantic -municode -mwindows -Iinclude .\gui\Phase3GUI.cpp (Get-ChildItem src -Filter *.cpp | Where-Object Name -ne 'main.cpp' | ForEach-Object FullName) -lcomctl32 -o EduTrackPhase3.exe
+.\EduTrackPhase3.exe
+```
+
+Compile **only** `Phase3GUI.cpp` for this program; `gui/WindowsGUI.cpp` is the
+unchanged Phase-II desktop application with a separate `wWinMain` entry point.
+The Phase-III console remains the safe place to create academic groups, assign
+students, and edit records (menu options 21–27). Close the console before
+opening/reloading the desktop. The preview reads files from the **current
+working directory**; launch it in the same project/data directory.
+
+**GUI workflow:** Choose a student in the top selector; review Student profiles
+and Academic insights; use What-if simulator to adjust a single hypothetical
+subject mark and optionally compare the group rank; use Goal planner to enter
+an exact target percentage (such as `75.25`) or grade (`A+`) and optional
+per-subject ceiling marks in stored subject order. Select Reload files after
+closing the console to import saved changes. No action in this preview changes
+student records. If no comparable group exists, the simulator still reports
+marks/grade changes but correctly omits projected rank, and the Insight page
+explains that peers are required.
+
+**Safety and validation:** The program blocks load when `.tmp` or `.bak`
+recovery files are present, rejects corrupt or inconsistent academic metadata,
+and loads into temporary objects before replacing the displayed data. It does
+not silently discard assignments. Missing files are treated as empty datasets.
+GCC and Clang portable-console checks and independent analytic tests can be
+run on Linux/macOS, but this is **not** a native Windows GUI test. Before a
+university demonstration, compile the preview on Windows and inspect each
+page at default/high DPI and after maximize/restore; verify the text does not
+clip or overprint. Stage 3F2 will address safe group-editing controls and the
+remaining Windows visual tests. The default GitHub `main` and older Phase-II
+GUI remain the fallback.
+
