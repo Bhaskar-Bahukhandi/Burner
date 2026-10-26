@@ -111,61 +111,75 @@ The console application builds using C++17 on GCC and Clang and its data functio
 - Test the GUI on the Windows demonstration laptop and keep the console version as a fallback.
 - Replace the placeholder repository/commit entries and old progress figures in the Phase-II report with accurate information.
 
-## Phase III development (separate branch)
+## Phase III development (Stage 3C console checkpoint)
 
-The first Phase-III module is `ImprovementSimulator.*`. It calculates the effect of
-changing one subject mark **hypothetically**, including the total, average percentage
-and letter grade under the selected illustrative grading scheme. Subject numbers
-start at 1. Invalid marks or subject numbers are rejected. A simulation never changes
-the stored `Student` object, `students.txt`, the undo stack or queued requests.
+This branch adds the **Academic Improvement Simulator**, named academic groups, and
+rank simulation for comparable classmates. It is intentionally separate from the
+Phase-II `main` branch. The original console and Win32 GUI remain available.
 
-The module is not connected to the console or GUI yet. The next checkpoints will
-introduce subject identities and comparable academic groups, followed by a
-rank-aware simulator, explainable insights and a goal planner. Real marks must not
-change when trying hypothetical values. The original Phase-II application remains
-the fallback until those features pass integration tests.
+### Console options added
 
-## Stage 3B: academic groups and named subjects (module only)
+| Menu | Function |
+| --- | --- |
+| 21 | Create an academic group with an ID, branch, semester, cohort and ordered named subjects |
+| 22 | Assign an existing student to a group (exact branch/semester/subject count required) |
+| 23 | Remove a student's group assignment |
+| 24 | List groups, subject codes/names and assigned student counts |
+| 25 | Preview a changed mark, grade and **rank within the assigned group** |
 
-The files `AcademicGroups.*` and `AcademicGroupStorage.*` add a small
-subject catalog for Phase III. A group contains a code, the exact branch,
-semester, admission cohort, and an ordered list of subject codes and names.
-Students can be assigned to a group **only explicitly**. Existing records
-are not assigned automatically. Two students are eligible for later
-like-for-like comparisons only when both valid assignments point to the
-**same academic group**. Different branches, semesters, cohorts, subject
-counts or unassigned students must not be compared as classmates.
+To compare students, first add their records, then create a group and explicitly
+assign at least two classmates to it. The group ID and subject codes must use
+uppercase letters, digits, hyphens or underscores. All subject positions must refer
+to the same subjects. Cohort is the admission year (2000–2100).
 
-The original `students.txt` continues to use the `EDUTRACK 1` format and is
-not altered by this stage. When the application adds a group-management
-screen in a later stage, it will save extra metadata separately in
-`academic_groups.txt` (`EDUTRACK GROUPS 1`). The sidecar records the group,
-its subjects in mark order, and each assigned student's roll number and
-name. Existing Phase-II executables can still read `students.txt`.
+A what-if simulation changes **nothing** in real records or files. It builds a
+separate temporary list of assigned students from the **same group**, compares
+percentage, then total marks and roll number (the existing rank tie-breakers),
+and prints current and projected group ranks. Missing assignments, invalid subject
+numbers and groups with fewer than two assigned students are rejected.
 
-Group IDs and subject codes use uppercase letters, digits, underscore or
-hyphen; semester 1–12, admission cohort from 2000 to 2100, and 1–20 unique
-subjects per group. The branch must match a student's branch exactly.
-The name check also helps detect reuse of a deleted roll number; an old
-assignment must not automatically transfer to a renamed student. However,
-without an immutable student identifier the program cannot distinguish two
-people reusing exactly the same roll number and name. A later stage should
-address that if the school needs it.
+### Files and safety
 
-`AcademicGroupStorage::load` validates the entire sidecar against the current
-student records before replacing the existing group catalog. Any orphaned
-or mismatched assignment is an error, **not** silently deleted or accepted.
-Saving first writes `.tmp` and retains a `.bak` during replacement, similarly
-to the existing record saver. A stale `.tmp`/`.bak` blocks another save until
-someone checks the files. Group metadata and student marks are two separate
-files; they are not an atomic database transaction, so the next UI integration
-must handle save order and recovery explicitly. If records change outside the
-catalog workflow, such as via the old GUI, assignments can become stale and
-will need rechecking or explicit reassignment before saving.
+`students.txt` is still `EDUTRACK 1`, unchanged from Phase II. Academic groups are
+saved in `academic_groups.txt` (`EDUTRACK GROUPS 1`). The original Phase-II
+application can continue to read `students.txt` without understanding groups.
 
-**Not connected to the user interface yet:** Stage 3B validates the catalog
-and file format through isolated C++ tests. No GUI or console option has
-been added for assigning subject names. Stage 3C will add the user-facing
-assignment workflow and rank-aware simulation, with tests for edits, undo,
-queued changes, and both data files. The Stage 3A simulator still changes
-no real student marks.
+Group changes save metadata immediately, after any unsaved student records have
+been saved. In the Stage 3C console, edits, deletes, undo and queued operations
+are checked **before** committing; any operation that would invalidate a group
+assignment is blocked. A blocked queued request remains queued for later.
+Unassign that student using option 23 before changing their name, branch,
+semester, subject count or deleting the student. A marks-only update that keeps
+identity and subject count is allowed.
+
+Reload uses temporary objects and accepts the replacement only if **both** the
+student file and the academic group file are valid. Corrupt or stale assignments
+will not silently replace the active session. Existing `.tmp` or `.bak` files
+must be inspected before restarting. Do not delete an old backup blindly.
+
+**Known limitations:** This is **not** an atomic two-file transaction or a
+multi-user database. The legacy Windows GUI is not yet connected to academic
+group metadata and can make edits that invalidate those assignments; run only one
+EduTrack application at a time, maintain backups, and use the Stage 3C console
+for group-aware editing. Student identity is still based on roll number and name,
+not a permanent immutable ID. The old all-class ranking and subject reports
+remain as Phase-II features and are **not** equivalent to group-scoped analysis.
+
+### Compile and try Stage 3C
+
+Build the console with the same C++17 command in **Build** above; it automatically
+includes the Stage 3A–3C `.cpp` files. On a clean folder:
+
+1. Add two students in the same branch and semester with marks in the same subject order.
+2. Save records (18); create a group (21) with the same number of named subjects.
+3. Assign both students (22); show group details (24).
+4. Simulate a mark change (25). Check rank and percentage; find the student again
+   and verify the real marks did not change.
+5. Try deleting an assigned student: it must be blocked. Unassign first (23)
+   and then retry if deletion is intended.
+6. Exit, reopen, and verify the group and assignments loaded successfully.
+
+This checkpoint's console and academic modules passed strict GCC and Clang
+compilation, sanitizer-level module checks and scripted save/reload tests on Linux.
+The **Win32 GUI additions for Phase III are still pending** and must be built
+and visually checked on Windows before use. Keep Phase-II `main` as the fallback.
