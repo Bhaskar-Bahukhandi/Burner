@@ -10,3 +10,8 @@ students.txt.bak
 
 # Editor settings
 .vscode/
+
+# Optional Phase III academic metadata
+academic_groups.txt
+academic_groups.txt.tmp
+academic_groups.txt.bak

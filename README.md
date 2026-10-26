@@ -124,3 +124,48 @@ introduce subject identities and comparable academic groups, followed by a
 rank-aware simulator, explainable insights and a goal planner. Real marks must not
 change when trying hypothetical values. The original Phase-II application remains
 the fallback until those features pass integration tests.
+
+## Stage 3B: academic groups and named subjects (module only)
+
+The files `AcademicGroups.*` and `AcademicGroupStorage.*` add a small
+subject catalog for Phase III. A group contains a code, the exact branch,
+semester, admission cohort, and an ordered list of subject codes and names.
+Students can be assigned to a group **only explicitly**. Existing records
+are not assigned automatically. Two students are eligible for later
+like-for-like comparisons only when both valid assignments point to the
+**same academic group**. Different branches, semesters, cohorts, subject
+counts or unassigned students must not be compared as classmates.
+
+The original `students.txt` continues to use the `EDUTRACK 1` format and is
+not altered by this stage. When the application adds a group-management
+screen in a later stage, it will save extra metadata separately in
+`academic_groups.txt` (`EDUTRACK GROUPS 1`). The sidecar records the group,
+its subjects in mark order, and each assigned student's roll number and
+name. Existing Phase-II executables can still read `students.txt`.
+
+Group IDs and subject codes use uppercase letters, digits, underscore or
+hyphen; semester 1–12, admission cohort from 2000 to 2100, and 1–20 unique
+subjects per group. The branch must match a student's branch exactly.
+The name check also helps detect reuse of a deleted roll number; an old
+assignment must not automatically transfer to a renamed student. However,
+without an immutable student identifier the program cannot distinguish two
+people reusing exactly the same roll number and name. A later stage should
+address that if the school needs it.
+
+`AcademicGroupStorage::load` validates the entire sidecar against the current
+student records before replacing the existing group catalog. Any orphaned
+or mismatched assignment is an error, **not** silently deleted or accepted.
+Saving first writes `.tmp` and retains a `.bak` during replacement, similarly
+to the existing record saver. A stale `.tmp`/`.bak` blocks another save until
+someone checks the files. Group metadata and student marks are two separate
+files; they are not an atomic database transaction, so the next UI integration
+must handle save order and recovery explicitly. If records change outside the
+catalog workflow, such as via the old GUI, assignments can become stale and
+will need rechecking or explicit reassignment before saving.
+
+**Not connected to the user interface yet:** Stage 3B validates the catalog
+and file format through isolated C++ tests. No GUI or console option has
+been added for assigning subject names. Stage 3C will add the user-facing
+assignment workflow and rank-aware simulation, with tests for edits, undo,
+queued changes, and both data files. The Stage 3A simulator still changes
+no real student marks.
