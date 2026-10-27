@@ -291,19 +291,48 @@ bool checkedExists(const std::string& file, bool& present) {
     return false;
 }
 
-// Both files must be read into temporary objects before replacing live records.
+// Reload uses the same recovery-file rules as startup. Rejecting leftovers
+// matters because a .bak/.tmp may mean the previous save was interrupted.
+// Load both files into temporary objects; failures keep live state unchanged.
 bool loadBoth(const std::string& studentsFile, const std::string& groupsFile,
               StudentManagement& records, AcademicGroups& groups,
               std::string& error) {
-    StudentManagement proposedRecords;
-    if (!RecordStorage::load(studentsFile, proposedRecords, error)) return false;
-    AcademicGroups proposedGroups;
-    bool found = false;
+    namespace fs = std::filesystem;
+    error.clear();
+    for (const std::string& file : {studentsFile, groupsFile}) {
+        for (const char* suffix : {".tmp", ".bak"}) {
+            std::error_code ec;
+            const std::string recovery = file + suffix;
+            const bool exists = fs::exists(recovery, ec);
+            if (ec) {
+                error = "Cannot inspect recovery file " + recovery + ": " + ec.message();
+                return false;
+            }
+            if (exists) {
+                error = "Recovery file " + recovery +
+                        " exists. Inspect it before reloading.";
+                return false;
+            }
+        }
+    }
     std::error_code ec;
-    found = std::filesystem::exists(groupsFile, ec);
+    const bool studentsExist = fs::exists(studentsFile, ec);
+    if (ec) { error = "Cannot inspect student data: " + ec.message(); return false; }
+    StudentManagement proposedRecords;
+    // A fresh project with no students.txt is a valid empty dataset, just
+    // as it is during application startup.
+    if (studentsExist && !RecordStorage::load(studentsFile, proposedRecords, error))
+        return false;
+    ec.clear();
+    const bool groupsExist = fs::exists(groupsFile, ec);
     if (ec) { error = "Cannot inspect group data: " + ec.message(); return false; }
-    if (found && !AcademicGroupStorage::load(groupsFile, proposedRecords,
-                                              proposedGroups, error)) return false;
+    AcademicGroups proposedGroups;
+    if (groupsExist && !AcademicGroupStorage::load(groupsFile, proposedRecords,
+                                                    proposedGroups, error)) return false;
+    if (!proposedGroups.consistentWith(proposedRecords)) {
+        error = "Saved academic-group assignments do not match student records.";
+        return false;
+    }
     records = std::move(proposedRecords);
     groups = std::move(proposedGroups);
     return true;
