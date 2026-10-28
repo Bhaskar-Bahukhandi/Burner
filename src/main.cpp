@@ -2,7 +2,7 @@
 #include "AcademicGroupStorage.h"
 #include "GroupConsole.h"
 #include "ChangeHistory.h"
-#include "RecordStorage.h"
+#include "SqliteStorage.h"
 #include "RecordAlgorithms.h"
 #include "RequestQueue.h"
 #include "StudentManagement.h"
@@ -283,59 +283,11 @@ bool processSafely(StudentManagement& records, ChangeHistory& history,
     return true;
 }
 
-bool checkedExists(const std::string& file, bool& present) {
-    std::error_code error;
-    present = std::filesystem::exists(file, error);
-    if (!error) return true;
-    std::cerr << "Cannot inspect " << file << ": " << error.message() << "\n";
-    return false;
-}
-
-// Reload uses the same recovery-file rules as startup. Rejecting leftovers
-// matters because a .bak/.tmp may mean the previous save was interrupted.
-// Load both files into temporary objects; failures keep live state unchanged.
-bool loadBoth(const std::string& studentsFile, const std::string& groupsFile,
-              StudentManagement& records, AcademicGroups& groups,
-              std::string& error) {
-    namespace fs = std::filesystem;
-    error.clear();
-    for (const std::string& file : {studentsFile, groupsFile}) {
-        for (const char* suffix : {".tmp", ".bak"}) {
-            std::error_code ec;
-            const std::string recovery = file + suffix;
-            const bool exists = fs::exists(recovery, ec);
-            if (ec) {
-                error = "Cannot inspect recovery file " + recovery + ": " + ec.message();
-                return false;
-            }
-            if (exists) {
-                error = "Recovery file " + recovery +
-                        " exists. Inspect it before reloading.";
-                return false;
-            }
-        }
-    }
-    std::error_code ec;
-    const bool studentsExist = fs::exists(studentsFile, ec);
-    if (ec) { error = "Cannot inspect student data: " + ec.message(); return false; }
-    StudentManagement proposedRecords;
-    // A fresh project with no students.txt is a valid empty dataset, just
-    // as it is during application startup.
-    if (studentsExist && !RecordStorage::load(studentsFile, proposedRecords, error))
-        return false;
-    ec.clear();
-    const bool groupsExist = fs::exists(groupsFile, ec);
-    if (ec) { error = "Cannot inspect group data: " + ec.message(); return false; }
-    AcademicGroups proposedGroups;
-    if (groupsExist && !AcademicGroupStorage::load(groupsFile, proposedRecords,
-                                                    proposedGroups, error)) return false;
-    if (!proposedGroups.consistentWith(proposedRecords)) {
-        error = "Saved academic-group assignments do not match student records.";
-        return false;
-    }
-    records = std::move(proposedRecords);
-    groups = std::move(proposedGroups);
-    return true;
+// SQLite is the only live persistence backend. A missing database is a fresh
+// project only when there is no legacy data to import explicitly.
+bool loadBoth(const std::string& databaseFile, StudentManagement& records,
+              AcademicGroups& groups, std::string& error) {
+    return SqliteStorage::load(databaseFile, records, groups, error);
 }
 
 void showMenu() {
@@ -357,8 +309,8 @@ void showMenu() {
               << "15. Process all pending requests\n"
               << "16. Student academic report\n"
               << "17. Class and subject report\n"
-              << "18. Save student records\n"
-              << "19. Reload saved records\n"
+              << "18. Save pending changes to SQLite\n"
+              << "19. Reload from SQLite\n"
               << "20. Change grading scheme / show criteria\n"
               << "21. Create academic group\n"
               << "22. Assign student to group\n"
@@ -376,70 +328,47 @@ int main() {
     ChangeHistory history;
     RequestQueue queue;
     AcademicGroups groups;
-    const std::string groupFile = "academic_groups.txt";
-    const std::string filename = "students.txt";
+    const std::string filename = "edutrack.db";
     bool dirty = false;
     auto gradeScale = AcademicProcessing::GradeScale::GeuReference;
     namespace fs = std::filesystem;
     std::error_code fileError;
-    const bool hasData = fs::exists(filename, fileError);
+    const bool sqlExists = fs::exists(filename, fileError);
     if (fileError) {
-        std::cerr << "Cannot inspect saved records: " << fileError.message() << "\n";
+        std::cerr << "Cannot inspect SQLite file: " << fileError.message() << "\n";
         return 1;
     }
-    // Check each recovery file separately so an error from the first check
-    // cannot be overwritten by the second filesystem call.
-    for (const char* extension : {".bak", ".tmp"}) {
-        fileError.clear();
-        const std::string recoveryFile = filename + extension;
-        const bool present = fs::exists(recoveryFile, fileError);
-        if (fileError) {
-            std::cerr << "Cannot inspect " << recoveryFile << ": "
-                      << fileError.message() << "\n";
-            return 1;
+    if (!sqlExists) {
+        // Never overwrite or automatically migrate legacy records.
+        for (const char* old : {"students.txt", "academic_groups.txt"}) {
+            fileError.clear();
+            if (fs::exists(old, fileError) || fileError) {
+                std::cerr << "Legacy data exists (or cannot be inspected): " << old
+                          << ". Back up your files and run the migration tool "
+                             "before starting the SQLite console.\n";
+                return 1;
+            }
         }
-        if (present) {
-            std::cerr << "Recovery file " << recoveryFile
-                      << " exists. Check the saved records before restarting.\n";
-            return 1;
-        }
-    }
-    if (hasData) {
         std::string error;
-        if (!RecordStorage::load(filename, records, error)) {
-            std::cerr << "Cannot load saved records: " << error
-                      << ". The file was not changed.\n";
+        if (!SqliteStorage::save(filename, records, groups, error)) {
+            std::cerr << "Cannot initialize SQLite database: " << error << "\n";
             return 1;
         }
-        std::cout << "Loaded " << records.allStudents().size()
-                  << " saved student records.\n";
+        std::cout << "Created empty edutrack.db SQLite database.\n";
     } else {
-        std::cout << "No saved file found. Starting with empty records.\n";
-    }
-    // A partial metadata save must be inspected before opening the app.
-    for (const char* extension : {".bak", ".tmp"}) {
-        bool present = false;
-        if (!checkedExists(groupFile + extension, present)) return 1;
-        if (present) {
-            std::cerr << "Recovery metadata found: " << groupFile << extension
-                      << ". Inspect it before continuing.\n";
-            return 1;
-        }
-    }
-    bool groupsPresent = false;
-    if (!checkedExists(groupFile, groupsPresent)) return 1;
-    if (groupsPresent) {
         std::string error;
-        if (!AcademicGroupStorage::load(groupFile, records, groups, error)) {
-            std::cerr << "Cannot load academic groups: " << error
-                      << ". Student records were not changed.\n";
+        if (!SqliteStorage::load(filename, records, groups, error)) {
+            std::cerr << "Cannot load SQLite database: " << error << "\n";
             return 1;
         }
-        std::cout << "Loaded " << groups.groups().size() << " academic groups.\n";
     }
+    StudentManagement persistedRecords = records;
+    AcademicGroups persistedGroups = groups;
+    std::cout << "Loaded " << records.allStudents().size() << " students and "
+              << groups.groups().size() << " academic groups from SQLite.\n";
     std::cout << "Grading: " << AcademicProcessing::scaleName(gradeScale) << "\n";
-    std::cout << "Record changes are saved on exit or by option 18. "
-                 "Undo history and queued requests are not saved.\n";
+    std::cout << "Changes commit to SQLite inside a transaction when saved. "
+                 "Undo and queued requests exist only in memory.\n";
 
     while (true) {
         showMenu();
@@ -451,14 +380,15 @@ int main() {
             }
             if (dirty) {
                 std::string error;
-                if (!RecordStorage::save(filename, records, error)) {
+                if (!SqliteStorage::commit(filename, persistedRecords, persistedGroups, records, groups, error)) {
                     std::cerr << "Save failed: " << error << "\n";
                     if (!choice) return 1;  // Input ended; cannot offer recovery.
                     std::cerr << "Records remain in memory. Resolve the issue and retry.\n";
                     continue;
                 }
                 dirty = false;
-                std::cout << "Saved student records.\n";
+                persistedRecords = records;
+                std::cout << "Saved student records to SQLite.\n";
                 if (!error.empty()) std::cout << "Note: " << error << "\n";
             }
             break;
@@ -468,15 +398,17 @@ int main() {
             // persisting assignments for students absent from students.txt.
             if ((*choice == 21 || *choice == 22 || *choice == 23) && dirty) {
                 std::string error;
-                if (!RecordStorage::save(filename, records, error)) {
+                if (!SqliteStorage::commit(filename, persistedRecords, persistedGroups, records, groups, error)) {
                     std::cout << "Save students first: " << error << "\n";
                     continue;
                 }
                 dirty = false;
+                persistedRecords = records;
                 if (!error.empty()) std::cout << "Note: " << error << "\n";
             }
-            if (!GroupConsole::handle(*choice, records, groups, groupFile,
+            if (!GroupConsole::handle(*choice, records, groups, filename,
                                       gradeScale, std::cin, std::cout)) break;
+            persistedGroups = groups;
             continue;
         }
         if (*choice == 20) {
@@ -499,8 +431,9 @@ int main() {
         }
         if (*choice == 18) {
             std::string error;
-            if (RecordStorage::save(filename, records, error)) {
+            if (SqliteStorage::commit(filename, persistedRecords, persistedGroups, records, groups, error)) {
                 dirty = false;
+                persistedRecords = records;
                 std::cout << "Saved " << records.allStudents().size()
                           << " student records.\n";
                 if (!error.empty()) std::cout << "Note: " << error << "\n";
@@ -514,10 +447,12 @@ int main() {
                 continue;
             }
             std::string error;
-            if (loadBoth(filename, groupFile, records, groups, error)) {
+            if (loadBoth(filename, records, groups, error)) {
                 history.clear();
                 queue.clear();
                 dirty = false;
+                persistedRecords = records;
+                persistedGroups = groups;
                 std::cout << "Records and group metadata reloaded. Undo history and queue cleared.\n";
             } else {
                 std::cout << "Reload failed: " << error
@@ -635,12 +570,13 @@ int main() {
     // An EOF during a form also exits the loop. Save those edits as well.
     if (dirty) {
         std::string error;
-        if (!RecordStorage::save(filename, records, error)) {
+        if (!SqliteStorage::commit(filename, persistedRecords, persistedGroups, records, groups, error)) {
             std::cerr << "Save failed on exit: " << error
                       << ". Unsaved records remain only in this session.\n";
             return 1;
         }
-        std::cout << "Saved student records.\n";
+        persistedRecords = records;
+        std::cout << "Saved student records to SQLite.\n";
         if (!error.empty()) std::cout << "Note: " << error << "\n";
     }
     if (queue.size() != 0) {

@@ -1,6 +1,7 @@
 #include "GroupConsole.h"
 #include "AcademicInsights.h"
 #include "ImprovementGoalPlanner.h"
+#include "SqliteStorage.h"
 
 #include <iomanip>
 #include <sstream>
@@ -133,12 +134,12 @@ bool saveChange(const std::string& filename, const StudentManagement& records,
                 AcademicGroups& groups, AcademicGroups& proposed,
                 std::ostream& output) {
     std::string error;
-    if (!AcademicGroupStorage::save(filename, records, proposed, error)) {
+    if (!SqliteStorage::commit(filename, records, groups, records, proposed, error)) {
         output << "Group change was NOT applied: " << error << "\n";
         return true;
     }
     groups = std::move(proposed);
-    output << "Academic group information saved.\n";
+    output << "Academic group information committed to SQLite.\n";
     if (!error.empty()) output << "Note: " << error << "\n";
     return true;
 }

@@ -6,8 +6,8 @@
 
 #include <string>
 
-// Stage 3G2A: SQLite storage foundation. The application is not switched to
-// this backend yet. Existing EDUTRACK 1 and GROUPS 1 files are never edited.
+// SQLite record and academic-group storage. Legacy text files are read only
+// by the explicit, non-destructive migration tool.
 namespace SqliteStorage {
 
 // Replaces both snapshots in a single SQLite transaction. On an error, the
@@ -21,6 +21,21 @@ bool save(const std::string& databaseFile, const StudentManagement& records,
 // parameters remain unchanged. Does not create a missing database.
 bool load(const std::string& databaseFile, StudentManagement& records,
           AcademicGroups& groups, std::string& error);
+
+// Compare a stable, fully checked persisted snapshot with the caller's state.
+// This is a convenience read; commit() repeats the check under a write lock.
+bool matches(const std::string& databaseFile,
+             const StudentManagement& expectedRecords, const AcademicGroups& expectedGroups,
+             std::string& error);
+
+// Optimistic, transactional write: compare both expected snapshots inside
+// BEGIN IMMEDIATE, then update ONLY affected students/marks/groups/assignments.
+// Concurrent changes are rejected; neither output nor old SQL data is changed
+// on failure. The DB must already exist.
+bool commit(const std::string& databaseFile,
+            const StudentManagement& expectedRecords, const AcademicGroups& expectedGroups,
+            const StudentManagement& newRecords, const AcademicGroups& newGroups,
+            std::string& error);
 
 // Import legacy students.txt + optional academic_groups.txt once. Refuses to
 // overwrite an existing SQLite database, and never edits source text files.
