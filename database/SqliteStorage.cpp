@@ -5,6 +5,8 @@
 #include <sqlite3.h>
 
 #include <filesystem>
+#include <map>
+#include <unordered_map>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -33,11 +35,11 @@ void execute(sqlite3* db, const char* sql) {
     throw std::runtime_error(details);
 }
 
-Database open(const std::string& path, bool create) {
+Database open(const std::string& path, bool create, bool write = false) {
     if (path.empty()) throw std::runtime_error("Database path cannot be empty");
     sqlite3* raw = nullptr;
     const int flags = create ? SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
-                             : SQLITE_OPEN_READONLY;
+                             : write ? SQLITE_OPEN_READWRITE : SQLITE_OPEN_READONLY;
     if (sqlite3_open_v2(path.c_str(), &raw, flags, nullptr) != SQLITE_OK) {
         const std::string reason = raw ? sqlite3_errmsg(raw) : "Out of memory";
         if (raw) sqlite3_close(raw);
@@ -174,6 +176,22 @@ void writeSnapshot(sqlite3* db, const StudentManagement& students, const Academi
     }
 }
 
+void verifyIntegrity(sqlite3* db) {
+    // Foreign-key checks catch orphan rows introduced by an external program
+    // with PRAGMA foreign_keys=OFF. Reject them before loading or editing.
+    auto check = prepare(db, "PRAGMA quick_check");
+    if (sqlite3_step(check.get()) != SQLITE_ROW ||
+        columnText(check.get(), 0) != "ok" ||
+        sqlite3_step(check.get()) != SQLITE_DONE)
+        throw std::runtime_error("SQLite quick_check failed; inspect the database backup");
+    auto foreign = prepare(db, "PRAGMA foreign_key_check");
+    const int result = sqlite3_step(foreign.get());
+    if (result != SQLITE_DONE) {
+        if (result != SQLITE_ROW) fail(db, "Check SQL foreign keys");
+        throw std::runtime_error("SQLite foreign key violations detected");
+    }
+}
+
 void ensureProjectDatabase(sqlite3* db, bool allowNew) {
     const int current = version(db);
     if (current == 1) {
@@ -205,6 +223,245 @@ void ensureNoRecoveryFiles(const std::string& file) {
         if (present) throw std::runtime_error("Recovery file exists: " + file + suffix);
     }
 }
+
+// Reconstruct a consistent checked snapshot using this connection. Callers
+// wrap this reader in a read or write transaction.
+void readSnapshot(sqlite3* db, StudentManagement& stagedRecords,
+                  AcademicGroups& stagedGroups) {
+            // One consistent SQL read snapshot, even if another process writes.
+            auto readStudents = prepare(db,
+                "SELECT roll_number,name,branch,semester FROM students ORDER BY roll_number");
+            std::size_t studentCount = 0;
+            while (true) {
+                int rc = sqlite3_step(readStudents.get());
+                if (rc == SQLITE_DONE) break;
+                if (rc != SQLITE_ROW) fail(db, "Read students");
+                const int roll = sqlite3_column_int(readStudents.get(), 0);
+                auto readMarks = prepare(db,
+                    "SELECT position,mark FROM marks WHERE roll_number=? ORDER BY position");
+                bindInt(db, readMarks.get(), 1, roll);
+                std::vector<int> marks;
+                while (true) {
+                    rc = sqlite3_step(readMarks.get());
+                    if (rc == SQLITE_DONE) break;
+                    if (rc != SQLITE_ROW) fail(db, "Read marks");
+                    if (sqlite3_column_int(readMarks.get(), 0) != static_cast<int>(marks.size()+1))
+                        throw std::runtime_error("Non-contiguous subject marks for roll " + std::to_string(roll));
+                    marks.push_back(sqlite3_column_int(readMarks.get(), 1));
+                }
+                if (!stagedRecords.addStudent(Student(roll, columnText(readStudents.get(), 1),
+                      columnText(readStudents.get(), 2), sqlite3_column_int(readStudents.get(), 3),
+                      std::move(marks))))
+                    throw std::runtime_error("Invalid student record in SQL database");
+                if (++studentCount > 10000) throw std::runtime_error("Too many students");
+            }
+            auto readGroups = prepare(db,
+                "SELECT group_id, branch, semester, cohort FROM academic_groups ORDER BY group_id");
+            std::size_t groupCount = 0;
+            while (true) {
+                int rc = sqlite3_step(readGroups.get());
+                if (rc == SQLITE_DONE) break;
+                if (rc != SQLITE_ROW) fail(db, "Read academic groups");
+                AcademicGroup group{columnText(readGroups.get(), 0),columnText(readGroups.get(), 1),
+                                    sqlite3_column_int(readGroups.get(),2),columnText(readGroups.get(),3),{}};
+                auto readSubjects = prepare(db,
+                    "SELECT position,code,name FROM subjects WHERE group_id=? ORDER BY position");
+                bindText(db, readSubjects.get(), 1, group.id);
+                while (true) {
+                    rc = sqlite3_step(readSubjects.get());
+                    if (rc == SQLITE_DONE) break;
+                    if (rc != SQLITE_ROW) fail(db, "Read subjects");
+                    if (sqlite3_column_int(readSubjects.get(), 0) !=
+                        static_cast<int>(group.subjects.size()+1))
+                        throw std::runtime_error("Non-contiguous subject codes in group " + group.id);
+                    group.subjects.push_back({columnText(readSubjects.get(), 1),
+                                              columnText(readSubjects.get(), 2)});
+                }
+                if (!stagedGroups.addGroup(group))
+                    throw std::runtime_error("Invalid group definition in SQL database");
+                if (++groupCount > 200) throw std::runtime_error("Too many academic groups");
+            }
+            auto readAssignments = prepare(db,
+                "SELECT roll_number,group_id,student_name FROM group_assignments ORDER BY roll_number");
+            while (true) {
+                int rc = sqlite3_step(readAssignments.get());
+                if (rc == SQLITE_DONE) break;
+                if (rc != SQLITE_ROW) fail(db, "Read group assignments");
+                const int roll = sqlite3_column_int(readAssignments.get(), 0);
+                const std::string groupId = columnText(readAssignments.get(), 1);
+                const std::string assignedName = columnText(readAssignments.get(), 2);
+                const Student* student = stagedRecords.findStudent(roll);
+                if (!student || student->name() != assignedName ||
+                    stagedGroups.assignments().find(roll) != stagedGroups.assignments().end() ||
+                    !stagedGroups.assign(*student, groupId))
+                    throw std::runtime_error("Outdated group assignment in SQL database");
+            }
+            if (!stagedGroups.consistentWith(stagedRecords))
+                throw std::runtime_error("SQL records have inconsistent academic groups");
+ }
+
+bool equalRecords(const StudentManagement& a, const StudentManagement& b) {
+    if (a.allStudents().size() != b.allStudents().size()) return false;
+    std::unordered_map<int, const Student*> lookup;
+    lookup.reserve(b.allStudents().size());
+    for (const Student& value : b.allStudents()) lookup.emplace(value.rollNumber(), &value);
+    for (const Student& x : a.allStudents()) {
+        const auto found = lookup.find(x.rollNumber());
+        if (found == lookup.end()) return false;
+        const Student* y = found->second;
+        if (x.name() != y->name() || x.branch() != y->branch() ||
+            x.semester() != y->semester() || x.marks() != y->marks()) return false;
+    }
+    return true;
+}
+
+bool equalGroups(const AcademicGroups& a, const AcademicGroups& b) {
+    if (a.assignments().size() != b.assignments().size() ||
+        a.groups().size() != b.groups().size()) return false;
+    for (const auto& pair : a.assignments()) {
+        auto found = b.assignments().find(pair.first);
+        if (found == b.assignments().end() ||
+            pair.second.groupId != found->second.groupId ||
+            pair.second.studentName != found->second.studentName) return false;
+    }
+    for (const auto& pair : a.groups()) {
+        auto found = b.groups().find(pair.first);
+        if (found == b.groups().end()) return false;
+        const auto& x = pair.second;
+        const auto& y = found->second;
+        if (x.id != y.id || x.branch != y.branch || x.semester != y.semester ||
+            x.cohort != y.cohort || x.subjects.size() != y.subjects.size()) return false;
+        for (std::size_t i = 0; i < x.subjects.size(); ++i)
+            if (x.subjects[i].code != y.subjects[i].code ||
+                x.subjects[i].name != y.subjects[i].name) return false;
+    }
+    return true;
+}
+
+void writeDelta(sqlite3* db, const StudentManagement& previous,
+                const AcademicGroups& previousGroups,
+                const StudentManagement& current,
+                const AcademicGroups& currentGroups) {
+    if (!currentGroups.consistentWith(current) ||
+        current.allStudents().size() > 10000 || currentGroups.groups().size() > 200 ||
+        currentGroups.assignments().size() > 10000)
+        throw std::runtime_error("Invalid project state; no SQL changes applied");
+    std::unordered_map<int, const Student*> previousByRoll, currentByRoll;
+    previousByRoll.reserve(previous.allStudents().size());
+    currentByRoll.reserve(current.allStudents().size());
+    for (const Student& student : previous.allStudents())
+        previousByRoll.emplace(student.rollNumber(), &student);
+    for (const Student& student : current.allStudents())
+        currentByRoll.emplace(student.rollNumber(), &student);
+    // Remove only assignments whose association changed or whose definition
+    // is being replaced. This preserves all unrelated rows and their keys.
+    auto delAssignment = prepare(db, "DELETE FROM group_assignments WHERE roll_number=?");
+    auto delStudent = prepare(db, "DELETE FROM students WHERE roll_number=?");
+    auto delMarks = prepare(db, "DELETE FROM marks WHERE roll_number=?");
+    auto delGroup = prepare(db, "DELETE FROM academic_groups WHERE group_id=?");
+    auto addStudent = prepare(db, "INSERT INTO students VALUES(?,?,?,?)");
+    auto updateStudent = prepare(db, "UPDATE students SET name=?,branch=?,semester=? WHERE roll_number=?");
+    auto addMark = prepare(db, "INSERT INTO marks VALUES(?,?,?)");
+    auto addGroup = prepare(db, "INSERT INTO academic_groups VALUES(?,?,?,?)");
+    auto addSubject = prepare(db, "INSERT INTO subjects VALUES(?,?,?,?)");
+    auto addAssignment = prepare(db, "INSERT INTO group_assignments VALUES(?,?,?)");
+    const auto groupChanged = [&](const std::string& id) {
+        const auto* before = previousGroups.findGroup(id);
+        const auto* after = currentGroups.findGroup(id);
+        if (!before || !after) return before != after;
+        if (before->branch != after->branch || before->semester != after->semester ||
+            before->cohort != after->cohort || before->subjects.size() != after->subjects.size())
+            return true;
+        for (std::size_t i = 0; i < before->subjects.size(); ++i)
+            if (before->subjects[i].code != after->subjects[i].code ||
+                before->subjects[i].name != after->subjects[i].name) return true;
+        return false;
+    };
+    const auto assignmentChanged = [&](int roll, const GroupAssignment& before) {
+        const auto found = currentGroups.assignments().find(roll);
+        return found == currentGroups.assignments().end() ||
+            before.groupId != found->second.groupId ||
+            before.studentName != found->second.studentName || groupChanged(before.groupId);
+    };
+    for (const auto& item : previousGroups.assignments()) {
+        if (!assignmentChanged(item.first, item.second)) continue;
+        bindInt(db, delAssignment.get(), 1, item.first);
+        writeRow(db, delAssignment.get());
+    }
+    for (const Student& student : previous.allStudents()) {
+        if (currentByRoll.find(student.rollNumber()) != currentByRoll.end()) continue;
+        bindInt(db, delStudent.get(), 1, student.rollNumber());
+        writeRow(db, delStudent.get());
+    }
+    for (const auto& item : previousGroups.groups()) {
+        if (!groupChanged(item.first)) continue;
+        bindText(db, delGroup.get(), 1, item.first);
+        writeRow(db, delGroup.get());
+    }
+    for (const Student& student : current.allStudents()) {
+        const auto oldIt = previousByRoll.find(student.rollNumber());
+        const Student* earlier = oldIt == previousByRoll.end() ? nullptr : oldIt->second;
+        if (earlier && earlier->name() == student.name() &&
+            earlier->branch() == student.branch() &&
+            earlier->semester() == student.semester() &&
+            earlier->marks() == student.marks()) continue;
+        const bool marksChanged = !earlier || earlier->marks() != student.marks();
+        const bool detailsChanged = !earlier || earlier->name() != student.name() ||
+                                    earlier->branch() != student.branch() ||
+                                    earlier->semester() != student.semester();
+        if (!earlier) {
+            bindInt(db, addStudent.get(), 1, student.rollNumber());
+            bindText(db, addStudent.get(), 2, student.name());
+            bindText(db, addStudent.get(), 3, student.branch());
+            bindInt(db, addStudent.get(), 4, student.semester());
+            writeRow(db, addStudent.get());
+        } else {
+            if (detailsChanged) {
+                bindText(db, updateStudent.get(), 1, student.name());
+                bindText(db, updateStudent.get(), 2, student.branch());
+                bindInt(db, updateStudent.get(), 3, student.semester());
+                bindInt(db, updateStudent.get(), 4, student.rollNumber());
+                writeRow(db, updateStudent.get());
+            }
+            if (marksChanged) {
+                bindInt(db, delMarks.get(), 1, student.rollNumber());
+                writeRow(db, delMarks.get());
+            }
+        }
+        if (marksChanged) for (std::size_t i = 0; i < student.marks().size(); ++i) {
+            bindInt(db, addMark.get(), 1, student.rollNumber());
+            bindInt(db, addMark.get(), 2, static_cast<int>(i + 1));
+            bindInt(db, addMark.get(), 3, student.marks()[i]);
+            writeRow(db, addMark.get());
+        }
+    }
+    for (const auto& item : currentGroups.groups()) {
+        if (!groupChanged(item.first)) continue;
+        const auto& g = item.second;
+        bindText(db, addGroup.get(), 1, g.id);
+        bindText(db, addGroup.get(), 2, g.branch);
+        bindInt(db, addGroup.get(), 3, g.semester);
+        bindText(db, addGroup.get(), 4, g.cohort);
+        writeRow(db, addGroup.get());
+        for (std::size_t i = 0; i < g.subjects.size(); ++i) {
+            bindText(db, addSubject.get(), 1, g.id);
+            bindInt(db, addSubject.get(), 2, static_cast<int>(i + 1));
+            bindText(db, addSubject.get(), 3, g.subjects[i].code);
+            bindText(db, addSubject.get(), 4, g.subjects[i].name);
+            writeRow(db, addSubject.get());
+        }
+    }
+    for (const auto& item : currentGroups.assignments()) {
+        auto earlier = previousGroups.assignments().find(item.first);
+        if (earlier != previousGroups.assignments().end() &&
+            !assignmentChanged(item.first, earlier->second)) continue;
+        bindInt(db, addAssignment.get(), 1, item.first);
+        bindText(db, addAssignment.get(), 2, item.second.groupId);
+        bindText(db, addAssignment.get(), 3, item.second.studentName);
+        writeRow(db, addAssignment.get());
+    }
+}
+
 
 } // namespace
 
@@ -244,76 +501,9 @@ bool load(const std::string& path, StudentManagement& records,
         AcademicGroups stagedGroups;
         execute(db.get(), "BEGIN");
         try {
-            // One consistent SQL read snapshot, even if another process writes.
-            auto readStudents = prepare(db.get(),
-                "SELECT roll_number,name,branch,semester FROM students ORDER BY roll_number");
-            std::size_t studentCount = 0;
-            while (true) {
-                int rc = sqlite3_step(readStudents.get());
-                if (rc == SQLITE_DONE) break;
-                if (rc != SQLITE_ROW) fail(db.get(), "Read students");
-                const int roll = sqlite3_column_int(readStudents.get(), 0);
-                auto readMarks = prepare(db.get(),
-                    "SELECT position,mark FROM marks WHERE roll_number=? ORDER BY position");
-                bindInt(db.get(), readMarks.get(), 1, roll);
-                std::vector<int> marks;
-                while (true) {
-                    rc = sqlite3_step(readMarks.get());
-                    if (rc == SQLITE_DONE) break;
-                    if (rc != SQLITE_ROW) fail(db.get(), "Read marks");
-                    if (sqlite3_column_int(readMarks.get(), 0) != static_cast<int>(marks.size()+1))
-                        throw std::runtime_error("Non-contiguous subject marks for roll " + std::to_string(roll));
-                    marks.push_back(sqlite3_column_int(readMarks.get(), 1));
-                }
-                if (!stagedRecords.addStudent(Student(roll, columnText(readStudents.get(), 1),
-                      columnText(readStudents.get(), 2), sqlite3_column_int(readStudents.get(), 3),
-                      std::move(marks))))
-                    throw std::runtime_error("Invalid student record in SQL database");
-                if (++studentCount > 10000) throw std::runtime_error("Too many students");
-            }
-            auto readGroups = prepare(db.get(),
-                "SELECT group_id, branch, semester, cohort FROM academic_groups ORDER BY group_id");
-            std::size_t groupCount = 0;
-            while (true) {
-                int rc = sqlite3_step(readGroups.get());
-                if (rc == SQLITE_DONE) break;
-                if (rc != SQLITE_ROW) fail(db.get(), "Read academic groups");
-                AcademicGroup group{columnText(readGroups.get(), 0),columnText(readGroups.get(), 1),
-                                    sqlite3_column_int(readGroups.get(),2),columnText(readGroups.get(),3),{}};
-                auto readSubjects = prepare(db.get(),
-                    "SELECT position,code,name FROM subjects WHERE group_id=? ORDER BY position");
-                bindText(db.get(), readSubjects.get(), 1, group.id);
-                while (true) {
-                    rc = sqlite3_step(readSubjects.get());
-                    if (rc == SQLITE_DONE) break;
-                    if (rc != SQLITE_ROW) fail(db.get(), "Read subjects");
-                    if (sqlite3_column_int(readSubjects.get(), 0) !=
-                        static_cast<int>(group.subjects.size()+1))
-                        throw std::runtime_error("Non-contiguous subject codes in group " + group.id);
-                    group.subjects.push_back({columnText(readSubjects.get(), 1),
-                                              columnText(readSubjects.get(), 2)});
-                }
-                if (!stagedGroups.addGroup(group))
-                    throw std::runtime_error("Invalid group definition in SQL database");
-                if (++groupCount > 200) throw std::runtime_error("Too many academic groups");
-            }
-            auto readAssignments = prepare(db.get(),
-                "SELECT roll_number,group_id,student_name FROM group_assignments ORDER BY roll_number");
-            while (true) {
-                int rc = sqlite3_step(readAssignments.get());
-                if (rc == SQLITE_DONE) break;
-                if (rc != SQLITE_ROW) fail(db.get(), "Read group assignments");
-                const int roll = sqlite3_column_int(readAssignments.get(), 0);
-                const std::string groupId = columnText(readAssignments.get(), 1);
-                const std::string assignedName = columnText(readAssignments.get(), 2);
-                const Student* student = stagedRecords.findStudent(roll);
-                if (!student || student->name() != assignedName ||
-                    stagedGroups.assignments().find(roll) != stagedGroups.assignments().end() ||
-                    !stagedGroups.assign(*student, groupId))
-                    throw std::runtime_error("Outdated group assignment in SQL database");
-            }
-            if (!stagedGroups.consistentWith(stagedRecords))
-                throw std::runtime_error("SQL records have inconsistent academic groups");
+            // Read one consistent SQLite snapshot without mutating outputs.
+            verifyIntegrity(db.get());
+            readSnapshot(db.get(), stagedRecords, stagedGroups);
             execute(db.get(), "COMMIT");
         } catch (...) {
             try { execute(db.get(), "ROLLBACK"); } catch (...) { }
@@ -321,6 +511,50 @@ bool load(const std::string& path, StudentManagement& records,
         }
         records = std::move(stagedRecords);
         groups = std::move(stagedGroups);
+        return true;
+    } catch (const std::exception& ex) {
+        error = ex.what();
+        return false;
+    }
+}
+
+bool matches(const std::string& path, const StudentManagement& expectedRecords,
+             const AcademicGroups& expectedGroups, std::string& error) {
+    StudentManagement actualRecords;
+    AcademicGroups actualGroups;
+    if (!load(path, actualRecords, actualGroups, error)) return false;
+    if (!equalRecords(actualRecords, expectedRecords) ||
+        !equalGroups(actualGroups, expectedGroups)) {
+        error = "Database was modified by another process; Reload before editing";
+        return false;
+    }
+    return true;
+}
+
+bool commit(const std::string& path, const StudentManagement& expectedRecords,
+            const AcademicGroups& expectedGroups,
+            const StudentManagement& nextRecords, const AcademicGroups& nextGroups,
+            std::string& error) {
+    error.clear();
+    try {
+        auto db = open(path, false, true);
+        ensureProjectDatabase(db.get(), false);
+        execute(db.get(), "PRAGMA synchronous = FULL");
+        execute(db.get(), "BEGIN IMMEDIATE");
+        try {
+            StudentManagement persisted;
+            AcademicGroups persistedGroups;
+            verifyIntegrity(db.get());
+            readSnapshot(db.get(), persisted, persistedGroups);
+            if (!equalRecords(expectedRecords, persisted) ||
+                !equalGroups(expectedGroups, persistedGroups))
+                throw std::runtime_error("Database changed since Reload; no edits saved");
+            writeDelta(db.get(), persisted, persistedGroups, nextRecords, nextGroups);
+            execute(db.get(), "COMMIT");
+        } catch (...) {
+            try { execute(db.get(), "ROLLBACK"); } catch (...) { }
+            throw;
+        }
         return true;
     } catch (const std::exception& ex) {
         error = ex.what();

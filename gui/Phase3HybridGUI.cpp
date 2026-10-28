@@ -23,7 +23,7 @@
 #include "ImprovementGoalPlanner.h"
 #include "ImprovementSimulator.h"
 #include "RecordAlgorithms.h"
-#include "RecordStorage.h"
+#include "SqliteStorage.h"
 #include "StudentManagement.h"
 #include "GuardedRecordWorkflow.h"
 #include "RequestQueue.h"
@@ -151,7 +151,7 @@ public:
     bool open(HINSTANCE hinstance, int show) {
         std::string error;
         if (!loadFiles(error)) {
-            MessageBoxW(nullptr, widen(error).c_str(), L"EduTrack — file safety check",
+            MessageBoxW(nullptr, widen(error).c_str(), L"EduTrack — SQLite database check",
                         MB_OK | MB_ICONERROR);
             return false;
         }
@@ -187,7 +187,6 @@ private:
     std::vector<int> tableRolls_;
     HACCEL accelerators_ = nullptr;
     AcademicProcessing::GradeScale gradeScale_ = AcademicProcessing::GradeScale::GeuReference;
-    std::optional<std::string> studentSnapshot_, groupSnapshot_;
 
     int px(int logical) const { return MulDiv(logical, dpi_, 96); }
     static LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
@@ -546,80 +545,34 @@ private:
         }
         place(StatusBar, x, h - px(36), content, px(27));
     }
-    // Exact byte snapshots catch external file changes before metadata-only writes.
-    // This is not a cross-process transaction or a substitute for a shared lock.
-    static bool snapshot(const std::string& path,
-                         std::optional<std::string>& output, std::string& error) {
-        std::error_code ec;
-        if (!std::filesystem::exists(path, ec)) {
-            if (ec) { error = "Could not check " + path; return false; }
-            output.reset();
-            return true;
-        }
-        if (ec || !std::filesystem::is_regular_file(path, ec) || ec) {
-            error = "Invalid file " + path; return false;
-        }
-        const auto bytes = std::filesystem::file_size(path, ec);
-        if (ec || bytes > 4 * 1024 * 1024) {
-            error = "File too large or unreadable: " + path; return false;
-        }
-        std::ifstream in(path, std::ios::binary);
-        if (!in) { error = "Cannot read " + path; return false; }
-        const std::string body((std::istreambuf_iterator<char>(in)),
-                               std::istreambuf_iterator<char>());
-        if (in.bad() || body.size() != bytes) {
-            error = "File changed or failed to read: " + path; return false;
-        }
-        output = body;
-        return true;
-    }
+    // SQL is the live source of truth. A missing database is an empty project
+    // ONLY if no legacy files are waiting for an explicit migration.
     bool loadFiles(std::string& error) {
         namespace fs = std::filesystem;
-        error.clear();
-        for (const char* base : {"students.txt", "academic_groups.txt"}) {
-            for (const char* ext : {".tmp", ".bak"}) {
-                std::error_code ec;
-                const std::string name = std::string(base) + ext;
-                const bool found = fs::exists(name, ec);
-                if (ec) { error = "Cannot inspect " + name + ": " + ec.message(); return false; }
-                if (found) { error = "Recovery file " + name + " exists. Inspect backups before opening."; return false; }
+        std::error_code ec;
+        const bool dbExists = fs::exists("edutrack.db", ec);
+        if (ec) { error = "Cannot check edutrack.db: " + ec.message(); return false; }
+        if (!dbExists) {
+            for (const char* legacy : {"students.txt", "academic_groups.txt"}) {
+                ec.clear();
+                if (fs::exists(legacy, ec) || ec) {
+                    error = "Legacy records found; run the SQLite migration tool first: " +
+                            std::string(legacy);
+                    return false;
+                }
             }
+            StudentManagement empty;
+            AcademicGroups emptyGroups;
+            if (!SqliteStorage::save("edutrack.db", empty, emptyGroups, error)) return false;
         }
-        std::optional<std::string> initialStudents, initialGroups;
-        if (!snapshot("students.txt", initialStudents, error) ||
-            !snapshot("academic_groups.txt", initialGroups, error)) return false;
         StudentManagement newRecords;
         AcademicGroups newGroups;
-        for (int which = 0; which < 2; ++which) {
-            const char* filename = which == 0 ? "students.txt" : "academic_groups.txt";
-            std::error_code ec;
-            const bool exists = fs::exists(filename, ec);
-            if (ec) { error = "Cannot inspect " + std::string(filename); return false; }
-            if (!exists) continue;
-            if (which == 0) {
-                if (!RecordStorage::load(filename, newRecords, error)) return false;
-            } else if (!AcademicGroupStorage::load(filename, newRecords, newGroups, error)) {
-                return false;
-            }
-        }
-        if (!newGroups.consistentWith(newRecords)) {
-            error = "Group assignments and student records disagree. No file was changed.";
-            return false;
-        }
-        std::optional<std::string> currentStudents, currentGroups;
-        if (!snapshot("students.txt", currentStudents, error) ||
-            !snapshot("academic_groups.txt", currentGroups, error)) return false;
-        if (currentStudents != initialStudents || currentGroups != initialGroups) {
-            error = "Saved files changed during reload. Close the other editor and retry.";
-            return false;
-        }
+        if (!SqliteStorage::load("edutrack.db", newRecords, newGroups, error)) return false;
         records_ = std::move(newRecords);
         groups_ = std::move(newGroups);
         history_.clear();
         queue_.clear();
         writesBlocked_ = false;
-        studentSnapshot_ = std::move(currentStudents);
-        groupSnapshot_ = std::move(currentGroups);
         return true;
     }
     const Student* selected() const {
@@ -775,7 +728,7 @@ private:
             << L"4. Test alternative marks in What-if simulator.\r\n"
             << L"5. Set an achievable percentage or grade in Goal planner.\r\n\r\n"
             << L"The analytics pages never save hypothetical marks or grades.\r\n"
-            << L"Record edits are saved to students.txt; group assignment changes use academic_groups.txt.\r\n\r\n"
+            << L"Record edits and group assignments are committed to edutrack.db in SQLite transactions.\r\n\r\n"
             << L"The overall record average is descriptive, NOT an average of a comparable group.";
         return out.str();
     }
@@ -845,7 +798,7 @@ private:
             << L"Process next applies the oldest request first. A rejected invalid request is\r\n"
             << L"removed; an academic-group conflict leaves it pending until resolved.\r\n"
             << L"Undo reverses a successful change only when group assignments remain valid.\r\n"
-            << L"Successful changes are saved to students.txt. The queue and undo history\r\n"
+            << L"Successful changes are committed to SQLite. The queue and undo history\r\n"
             << L"are not stored across reloads or restarts.\r\n\r\n"
             << L"Do not use another editor concurrently: there is no shared file lock.";
         return out.str();
@@ -942,8 +895,8 @@ private:
                   L"Queue and undo history are only in memory. Reload clears both.\r\n\r\n"
                   L"Academic Groups: assign and unassign from existing groups. Use the\r\n"
                   L"console to define new groups. Analytics simulations never save marks.\r\n\r\n"
-                  L"Every actual record save checks both files for external modifications,\r\n"
-                  L"and refuses .tmp or .bak recovery files. Two processes are NOT protected\r\n"
+                  L"Every actual record save checks SQLite for external modifications,\r\n"
+                  L"and rejects stale database changes. Concurrent writers are transaction-protected\r\n"
                   L"by a shared lock; do not run the console and GUI concurrently.\r\n"
                   L"A failed file verification disables further writes until Reload succeeds.\r\n\r\n"
                   L"Only the illustrative grading scales are available; these are NOT\r\n"
@@ -1110,25 +1063,12 @@ private:
     bool filesFresh(std::string& error) const {
         error.clear();
         if (writesBlocked_) {
-            error = "A previous write could not be verified. Inspect files and Reload first.";
+            error = "A previous write requires inspection. Reload the database first.";
             return false;
         }
-        for (const char* name : {"students.txt.tmp", "students.txt.bak",
-                                 "academic_groups.txt.tmp", "academic_groups.txt.bak"}) {
-            std::error_code ec;
-            if (std::filesystem::exists(name, ec) || ec) {
-                error = "Recovery file exists or inspection failed: " + std::string(name);
-                return false;
-            }
-        }
-        std::optional<std::string> students, groups;
-        if (!snapshot("students.txt", students, error) ||
-            !snapshot("academic_groups.txt", groups, error)) return false;
-        if (students != studentSnapshot_ || groups != groupSnapshot_) {
-            error = "Saved student/group files changed externally. Reload before editing.";
-            return false;
-        }
-        return true;
+        // commit() repeats this check after BEGIN IMMEDIATE, closing the
+        // read/write race even when two applications are open simultaneously.
+        return SqliteStorage::matches("edutrack.db", records_, groups_, error);
     }
     bool commitRecords(StudentManagement& nextRecords, ChangeHistory& nextHistory,
                        RequestQueue& nextQueue, int selectedRoll) {
@@ -1140,35 +1080,27 @@ private:
             warning(L"Change would invalidate an academic-group assignment. Unassign first.");
             return false;
         }
-        if (!RecordStorage::save("students.txt", nextRecords, error)) {
-            // An interrupted replacement might leave a recovery file. Never
-            // allow another edit without reloading and inspecting storage.
+        if (!SqliteStorage::commit("edutrack.db", records_, groups_,
+                                   nextRecords, groups_, error)) {
             writesBlocked_ = true;
-            warning(L"Student save failed. Inspect files and Reload before further edits. "
-                    + widen(error)); return false;
+            warning(L"SQLite commit failed; inspect the database and Reload before further edits. "
+                    + widen(error));
+            return false;
         }
-        // The on-disk save has succeeded. Keep memory aligned even if the
-        // subsequent readback fails; prevent more writes until Reload succeeds.
+        // SQLite COMMIT succeeded: never roll back to stale memory on a later
+        // verification error. Keep the user-visible records aligned with disk.
         records_ = std::move(nextRecords);
         history_ = std::move(nextHistory);
         queue_ = std::move(nextQueue);
-        std::string checkError;
-        std::optional<std::string> saved;
-        if (!snapshot("students.txt", saved, checkError)) {
+        if (!SqliteStorage::matches("edutrack.db", records_, groups_, error)) {
             writesBlocked_ = true;
-            warning(L"Records saved but could not be verified. Inspect saved files before Reload. "
-                    + widen(checkError));
+            warning(L"SQLite committed but could not be verified. Reload before editing. "
+                    + widen(error));
             fillStudents(selectedRoll); renderCurrent(); return false;
         }
-        studentSnapshot_ = std::move(saved);
         fillStudents(selectedRoll);
         renderCurrent();
-        status(L"Student records saved. Queue and undo remain in memory until exit/reload.");
-        if (!error.empty()) {
-            writesBlocked_ = true; // .bak cleanup warning: further edits are unsafe.
-            warning(L"Records were saved, but cleanup needs attention: " + widen(error));
-            return false;
-        }
+        status(L"Student changes committed to SQLite. Undo/queue are session-only.");
         return true;
     }
     void changeStudent(GuardedRecordWorkflow::Change change) {
@@ -1267,23 +1199,10 @@ private:
                  L"Confirm academic group change", MB_YESNO | MB_ICONQUESTION) != IDYES)
             return;
         if (writesBlocked_) { warning(L"Editing disabled until saved files are checked and reloaded."); return; }
-        // Reject any pending recovery files; do not write over an interrupted save.
-        for (const char* name : {"students.txt.tmp", "students.txt.bak",
-                                 "academic_groups.txt.tmp", "academic_groups.txt.bak"}) {
-            std::error_code ec;
-            if (std::filesystem::exists(name, ec) || ec) {
-                warning(L"Recovery files or file-check errors detected. Inspect before editing.");
-                return;
-            }
-        }
-        // Verify that neither source file was modified by another program since Reload.
         std::string error;
-        std::optional<std::string> beforeRecords, beforeGroups;
-        if (!snapshot("students.txt", beforeRecords, error) ||
-            !snapshot("academic_groups.txt", beforeGroups, error) ||
-            beforeRecords != studentSnapshot_ || beforeGroups != groupSnapshot_) {
-            warning(L"Files were changed externally (or could not be read). Reload files "
-                    L"and check again. No change was saved. " + widen(error));
+        if (!filesFresh(error)) {
+            warning(L"SQLite data changed (or could not be checked). Reload before editing. "
+                    + widen(error));
             return;
         }
         AcademicGroups proposed = groups_;
@@ -1294,31 +1213,22 @@ private:
                     L"does not match the group. No files changed.");
             return;
         }
-        if (!AcademicGroupStorage::save("academic_groups.txt", records_, proposed, error)) {
+        if (!SqliteStorage::commit("edutrack.db", records_, groups_,
+                                   records_, proposed, error)) {
             writesBlocked_ = true;
-            warning(L"Could not save assignment. Inspect saved files and Reload before retrying. "
-                    + widen(error));
+            warning(L"SQLite assignment commit failed. Reload before editing. " + widen(error));
             return;
         }
-        // On success, retain the saved group even if a cleanup warning was issued.
-        // Subsequent writes must pass a new snapshot/reload check.
         groups_ = std::move(proposed);
-        std::optional<std::string> saved;
-        if (!snapshot("academic_groups.txt", saved, error)) {
+        if (!SqliteStorage::matches("edutrack.db", records_, groups_, error)) {
             writesBlocked_ = true;
-            warning(L"Group was saved but could not be verified. Inspect files and Reload. "
+            warning(L"Assignment committed but verification failed. Reload before editing. "
                     + widen(error));
-            return;
+            fillStudents(roll); renderCurrent(); return;
         }
-        groupSnapshot_ = std::move(saved);
         fillStudents(roll);
         renderCurrent();
-        status(L"Academic-group assignment saved. Student marks were not changed.");
-        if (!error.empty()) {
-            writesBlocked_ = true;
-            warning(L"Assignment saved, but storage reported: " + widen(error) +
-                    L" Inspect files and Reload before another edit.");
-        }
+        status(L"Academic-group assignment committed to SQLite. Marks unchanged.");
     }
     void reload() {
         if ((queue_.size() || history_.undoCount()) &&
@@ -1330,7 +1240,7 @@ private:
         fillGroups();
         fillStudents(previous);
         renderCurrent();
-        status(L"Student records and academic groups reloaded successfully.");
+        status(L"Student records and academic groups reloaded from SQLite.");
     }
     void command(int id, int notification) {
         if (id == StudentChoice && notification == CBN_SELCHANGE && !updating_) {

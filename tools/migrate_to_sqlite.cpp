@@ -16,6 +16,6 @@ int main(int argc, char** argv) {
     }
     std::cout << "Imported and verified snapshot in " << argv[3] << '\n'
               << "Old text files remain unchanged. Do not delete them.\n"
-              << "Note: The console and GUIs still use text files until SQL integration.\n";
+              << "Note: use the Stage 3G2B SQL console or hybrid GUI; legacy builds still use text.\n";
     return 0;
 }
