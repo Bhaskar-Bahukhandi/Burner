@@ -22,3 +22,12 @@ edutrack.db-*
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Never commit student databases, backup copies or SQLite journals
+*.db
+*.db-*
+*.db.*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*

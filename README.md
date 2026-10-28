@@ -133,9 +133,65 @@ but **does not encrypt records, authenticate users, or provide server-side
 access controls by itself**. Protect the file with operating-system permissions,
 keep it out of Git, and avoid storing real private academic data in demos. For
 multi-user internet access, a server backend and authentication would be
-necessary. SQLite database backups/encryption will be addressed separately
-before final release. Do not copy only one WAL sidecar for backup; use a safe
-SQLite backup mechanism or close the application first.
+necessary. The Stage 3G2C maintenance tool now supplies verified SQLite online backups
+and safe restore-to-new-file. It does **not** encrypt the database. Use Windows
+account/file permissions or full-disk encryption for local protection, and
+store backup copies only in access-controlled locations. For stronger protection
+of a shared machine, plan a separately tested SQLCipher integration. Do not
+copy only a SQLite WAL sidecar or use backups as an authentication system.
+
+## SQLite backup, verification and recovery — Stage 3G2C
+
+The standalone `edutrack-db` tool is the **safest way to back up the current SQLite
+records**. It uses the SQLite online backup API rather than copying the main
+`.db` file while a WAL file may contain committed changes. Close both app
+windows before running a **restore**. The tool never silently overwrites a
+previous database or backup; every new copy receives a complete integrity,
+foreign-key and EduTrack record validation before becoming available.
+
+Linux build (in the EduTrack directory):
+
+```sh
+g++ -std=c++17 -Wall -Wextra -pedantic -Iinclude \
+    tools/database_maintenance.cpp database/DatabaseMaintenance.cpp \
+    database/SqliteStorage.cpp src/Student.cpp src/StudentManagement.cpp \
+    src/AcademicGroups.cpp src/RecordStorage.cpp src/AcademicGroupStorage.cpp \
+    -lsqlite3 -o edutrack-db
+```
+
+Windows PowerShell (with the matching SQLite3 development library installed):
+
+```powershell
+g++ -std=c++17 -Wall -Wextra -pedantic -Iinclude .\tools\database_maintenance.cpp .\database\DatabaseMaintenance.cpp .\database\SqliteStorage.cpp .\src\Student.cpp .\src\StudentManagement.cpp .\src\AcademicGroups.cpp .\src\RecordStorage.cpp .\src\AcademicGroupStorage.cpp -lsqlite3 -o edutrack-db.exe
+```
+
+Commands (replace `./edutrack-db` with `.\edutrack-db.exe` on Windows):
+
+```sh
+./edutrack-db verify edutrack.db
+./edutrack-db backup edutrack.db backup-2026-10-28.db
+./edutrack-db verify backup-2026-10-28.db
+./edutrack-db restore backup-2026-10-28.db edutrack-restored.db
+./edutrack-db verify edutrack-restored.db
+```
+
+**Restore activation is intentionally manual.** `restore` creates
+`edutrack-restored.db` and leaves a working `edutrack.db` untouched. After
+closing all EduTrack programs, preserve the existing `edutrack.db` **and any
+matching `-wal`/`-shm`/`-journal` files as a set**, confirm the restored record
+counts, and arrange an offline filename switch. Move the old database and all
+its matching sidecars away from the active filename before renaming the
+verified restored file to `edutrack.db`; never leave stale `edutrack.db-wal`
+or `edutrack.db-shm` files next to the new database. Do not replace a live
+WAL-mode database while the application is running. Never delete the original
+or source backup until you have reopened and verified the restored data.
+
+This tool is not an encrypted vault or cloud service; on Unix it creates new
+backup files with owner-only read/write bits, while Windows confidentiality
+continues to depend on NTFS account permissions/drive encryption. Keep all
+personal `.db`, `.sqlite`, backup and journal files out of Git. Password
+protection, SQLCipher encryption, authenticated multi-user access and
+an automatic GUI restore wizard remain **unimplemented**.
 
 ## Grading notes
 
@@ -150,7 +206,7 @@ represented as official SGPA or course results.
 Reference: Graphic Era (Deemed to be University), distance-learning Programme
 Project Report: https://files.geu.ac.in/odl/CIQA%202024/ppr.pdf
 
-## Phase-III release status — Stage 3G2B
+## Phase-III release status — Stage 3G2C
 
 The SQL console and the new Phase-III hybrid GUI now use `edutrack.db` as their
 primary data source. The standalone importer remains non-destructive: it never
@@ -161,8 +217,8 @@ transactional rollback, and compares snapshots under the SQLite write lock.
 **Not yet final:** the current hybrid source still needs a native Windows/MinGW
 compile and interactive visual/runtime validation. Linux GCC/Clang builds and
 portable SQLite regression tests do not establish that the Windows GUI builds
-or renders correctly. SQLite backup/restore and optional encryption are later
-release gates. The older console and GUI versions on Phase-II `main` are
+or renders correctly. SQLite backup and verify/restore-to-new-file are available in the maintenance
+tool; full encryption and native Windows backup/restore testing are still release gates. The older console and GUI versions on Phase-II `main` are
 preserved for rollback, not for simultaneously editing SQL data.
 
 **Required Windows test:** compile using the command above; open the imported
