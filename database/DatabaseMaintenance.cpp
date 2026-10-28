@@ -97,7 +97,14 @@ void requireDistinct(const fs::path& source, const fs::path& destination) {
 // A staged file is never silently removed if it existed before this call.
 // All staging files must be new; a leftover one requires human inspection.
 void requireAvailable(const fs::path& destination, const fs::path& staged) {
-    for (const auto& path : {destination, staged,
+    // A destination without a main DB but with old SQLite sidecars is NOT
+    // available: SQLite could later interpret an unrelated WAL/journal as
+    // belonging to the newly published database.
+    for (const auto& path : {destination,
+                             fs::path(destination.string() + "-wal"),
+                             fs::path(destination.string() + "-shm"),
+                             fs::path(destination.string() + "-journal"),
+                             staged,
                              fs::path(staged.string() + "-wal"),
                              fs::path(staged.string() + "-shm"),
                              fs::path(staged.string() + "-journal")}) {
