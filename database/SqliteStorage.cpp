@@ -215,6 +215,21 @@ void ensureProjectDatabase(sqlite3* db, bool allowNew) {
         throw std::runtime_error("The SQL file already contains another schema");
 }
 
+// A first-run initializer must never interpret an old database (or one of
+// its WAL/journal files) as permission to create/rewrite data. Use
+// symlink_status rather than exists() so a dangling symlink is also rejected.
+void requireNewDatabaseTarget(const std::string& path) {
+    if (path.empty()) throw std::runtime_error("Database path cannot be empty");
+    for (const std::string& name : {path, path + "-wal", path + "-shm", path + "-journal"}) {
+        std::error_code ec;
+        const auto status = fs::symlink_status(name, ec);
+        if (ec && ec != std::errc::no_such_file_or_directory)
+            throw std::runtime_error("Cannot inspect SQL target: " + ec.message());
+        if (status.type() != fs::file_type::not_found)
+            throw std::runtime_error("SQL target or recovery sidecar exists; refusing to overwrite: " + name);
+    }
+}
+
 void ensureNoRecoveryFiles(const std::string& file) {
     for (const char* suffix : {".tmp", ".bak"}) {
         std::error_code ec;
@@ -471,11 +486,18 @@ bool save(const std::string& path, const StudentManagement& records,
           const AcademicGroups& groups, std::string& error) {
     error.clear();
     try {
+        // This API is for one-time creation/import ONLY. Existing databases
+        // must be edited through commit(expected, next) instead.
+        requireNewDatabaseTarget(path);
         auto db = open(path, true);
-        ensureProjectDatabase(db.get(), true);
         execute(db.get(), "PRAGMA synchronous = FULL");
         execute(db.get(), "BEGIN IMMEDIATE");
         try {
+            // Check after taking the write lock too: simultaneous first-run
+            // attempts must not overwrite whichever initializer committed first.
+            ensureProjectDatabase(db.get(), true);
+            if (version(db.get()) != 0)
+                throw std::runtime_error("SQL database was initialized by another process; Reload");
             schema(db.get());
             writeSnapshot(db.get(), records, groups);
             execute(db.get(), "COMMIT");

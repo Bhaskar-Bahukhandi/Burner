@@ -38,12 +38,27 @@ predictions** or official university grade calculations.
 Phase-III components extend these areas; the table describes the original
 module split, not a claim that one person wrote every new feature.
 
-## Build and run — Stage 3G2B SQLite desktop
+## Build and run — SQLite desktop
 
 C++17 plus the **SQLite3 development headers and matching library** are now
-required for the main console and the hybrid GUI. On Windows, make sure the
-SQLite library matches your installed MinGW-w64 toolchain; a SQLite command-line
-utility alone does **not** supply the required link library.
+required for the main console and the hybrid GUI. On Windows, the compiler,
+SQLite headers and libraries must all come from the **same MinGW environment**.
+For a fresh MSYS2 installation, use the **UCRT64** terminal (not the deprecated
+MINGW64 environment) and install matching packages:
+
+```sh
+pacman -Syu
+pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-sqlite3
+```
+
+In PowerShell, verify that `g++` resolves to the matching
+`C:\msys64\ucrt64\bin\g++.exe` (for example with `where.exe g++`).
+If you have a different MinGW toolchain, install SQLite headers and libraries
+built for that toolchain instead; do not mix environments. The MSYS2 UCRT64
+shell can also run the commands with forward-slash paths. Official guidance:
+https://www.msys2.org/ and
+https://packages.msys2.org/packages/mingw-w64-ucrt-x86_64-sqlite3.
+A standalone SQLite command-line executable alone does not provide the link library.
 
 Linux (run from the project root):
 
@@ -121,7 +136,10 @@ g++ -std=c++17 -Wall -Wextra -pedantic -Iinclude .\tools\migrate_to_sqlite.cpp .
 ```
 
 **Consistency:** SQLite commits record and group changes in one transaction.
-The `SqliteStorage::commit()` function checks the caller's entire expected
+The one-time `SqliteStorage::save()` initializer **refuses existing database
+files and leftover WAL/SHM/journal files**; to edit a previously created
+project, use `SqliteStorage::commit()` instead. The importer must target a new
+filename. The `SqliteStorage::commit()` function checks the caller's entire expected
 snapshot *inside* a write transaction and rejects newer external changes;
 only affected record/mark/group/assignment rows are updated. A failed
 transaction leaves the previous committed state intact. Reload after a
@@ -146,7 +164,8 @@ The standalone `edutrack-db` tool is the **safest way to back up the current SQL
 records**. It uses the SQLite online backup API rather than copying the main
 `.db` file while a WAL file may contain committed changes. Close both app
 windows before running a **restore**. The tool never silently overwrites a
-previous database or backup; every new copy receives a complete integrity,
+previous database or backup, or publishes a copy beside **stale destination
+WAL/SHM/journal files**; every new copy receives a complete integrity,
 foreign-key and EduTrack record validation before becoming available.
 
 Linux build (in the EduTrack directory):
@@ -206,7 +225,7 @@ represented as official SGPA or course results.
 Reference: Graphic Era (Deemed to be University), distance-learning Programme
 Project Report: https://files.geu.ac.in/odl/CIQA%202024/ppr.pdf
 
-## Phase-III release status — Stage 3G2C
+## Phase-III release status — Stage 3G3A audit checkpoint
 
 The SQL console and the new Phase-III hybrid GUI now use `edutrack.db` as their
 primary data source. The standalone importer remains non-destructive: it never
@@ -218,7 +237,12 @@ transactional rollback, and compares snapshots under the SQLite write lock.
 compile and interactive visual/runtime validation. Linux GCC/Clang builds and
 portable SQLite regression tests do not establish that the Windows GUI builds
 or renders correctly. SQLite backup and verify/restore-to-new-file are available in the maintenance
-tool; full encryption and native Windows backup/restore testing are still release gates. The older console and GUI versions on Phase-II `main` are
+tool; encryption and native Windows backup/restore testing remain separate release
+gates. The Stage 3G3A audit hardened two risks: **new database initialization
+cannot overwrite a committed database**, including when two initializers race;
+and **backup/restore refuses stale sidecars at the destination**. Both are
+covered by GCC/Clang regression tests, but these are not Windows UI tests.
+The older console and GUI versions on Phase-II `main` are
 preserved for rollback, not for simultaneously editing SQL data.
 
 **Required Windows test:** compile using the command above; open the imported

@@ -10,10 +10,10 @@
 // by the explicit, non-destructive migration tool.
 namespace SqliteStorage {
 
-// Replaces both snapshots in a single SQLite transaction. On an error, the
-// previous committed database contents are preserved. Source objects are not
-// changed. This initial API is deliberately simple; a later integration will
-// replace full-snapshot saves with targeted SQL operations.
+// Creates a NEW SQLite database and atomically inserts both snapshots.
+// Refuses any existing SQL database, dangling target symlink or WAL/journal
+// sidecar. This function is ONLY for first-run initialization / migration;
+// edit existing records with commit(expected, next) to prevent data loss.
 bool save(const std::string& databaseFile, const StudentManagement& records,
           const AcademicGroups& groups, std::string& error);
 
