@@ -140,3 +140,37 @@ keyboard navigation and text repainting. Keep a copy of both saved files
 before testing any recovery scenario.
 
 This is a small educational desktop application, not a complete ERP system.
+
+
+## Stage 3G2A: SQLite foundation (migration preview)
+
+Phase III is **not final**: the application still uses its legacy files by default.
+The new `SqliteStorage` component and `migrate_to_sqlite` command provide a
+transactional, relational database **foundation**. The next step must switch
+**all** console and GUI persistence calls to one database; do not delete any
+legacy files yet. The SQL file is not encrypted by default.
+
+To compile the standalone importer on a machine with SQLite headers and library:
+
+```sh
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -Iinclude \
+    tools/migrate_to_sqlite.cpp database/SqliteStorage.cpp \
+    $(ls src/*.cpp | grep -v '/main.cpp') -lsqlite3 -o edutrack-migrate
+./edutrack-migrate students.txt academic_groups.txt edutrack.db
+```
+
+PowerShell (install the SQLite development headers/library matching your compiler):
+
+```powershell
+g++ -std=c++17 -Wall -Wextra -pedantic -Iinclude .\tools\migrate_to_sqlite.cpp .\database\SqliteStorage.cpp (Get-ChildItem src -Filter *.cpp | Where-Object Name -ne 'main.cpp' | ForEach-Object FullName) -lsqlite3 -o edutrack-migrate.exe
+.\edutrack-migrate.exe students.txt academic_groups.txt edutrack.db
+```
+
+The importer refuses an existing database, invalid legacy files, and old
+`.tmp/.bak` recovery files. It preserves both original source files. The
+SQLite layer supports atomic **combined snapshot** save/load using prepared
+statements, primary/foreign keys and validation. Its full-snapshot save is a
+compatibility step; later integration will add targeted SQL CRUD and a backup
+workflow. Do not run the old GUI/console while migrating. Keep private data and
+SQL database files outside version control. Encryption and user permissions
+require a separate deployment decision, not merely use of SQL.

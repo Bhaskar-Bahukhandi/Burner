@@ -15,3 +15,10 @@ students.txt.bak
 academic_groups.txt
 academic_groups.txt.tmp
 academic_groups.txt.bak
+
+# Phase III SQLite database (local student data)
+edutrack.db
+edutrack.db-*
+*.db-journal
+*.db-wal
+*.db-shm
