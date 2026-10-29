@@ -1,5 +1,6 @@
 #include "RecordAlgorithms.h"
 
+#include <algorithm>
 #include <numeric>
 
 namespace {
@@ -60,6 +61,15 @@ const Student* linearSearch(const std::vector<Student>& students, int rollNumber
 
 StudentView sortByRollNumber(const std::vector<Student>& students) {
     StudentView view = makeView(students);
+    std::sort(view.begin(), view.end(), [](const Student* a, const Student* b) {
+        return a->rollNumber() < b->rollNumber();
+    });
+    return view;
+}
+
+// Explicit pedagogical insertion sort, not used as preparation for search.
+StudentView insertionSortByRollNumber(const std::vector<Student>& students) {
+    StudentView view = makeView(students);
     insertionSort(view, [](const Student& a, const Student& b) {
         return a.rollNumber() < b.rollNumber();
     });
@@ -67,33 +77,28 @@ StudentView sortByRollNumber(const std::vector<Student>& students) {
 }
 
 const Student* binarySearch(const std::vector<Student>& students, int rollNumber) {
-    // Binary search requires ordered data. Prepare a sorted view first.
-    StudentView sorted = sortByRollNumber(students);
-    std::size_t low = 0;
-    std::size_t high = sorted.size();
-
-    while (low < high) {
-        const std::size_t mid = low + (high - low) / 2;
-        if (sorted[mid]->rollNumber() == rollNumber) return sorted[mid];
-        if (sorted[mid]->rollNumber() < rollNumber) low = mid + 1;
-        else high = mid;
-    }
-    return nullptr;
+    // PRECONDITION: students is in increasing roll order, as guaranteed by
+    // StudentManagement. Do not sort on each call: that makes lookup O(n^2).
+    const auto pos = std::lower_bound(students.begin(), students.end(), rollNumber,
+        [](const Student& item, int key) { return item.rollNumber() < key; });
+    return pos != students.end() && pos->rollNumber() == rollNumber ? &*pos : nullptr;
 }
 
 StudentView sortByPercentage(const std::vector<Student>& students) {
     StudentView view = makeView(students);
-    insertionSort(view, higherPercentage);
+    std::sort(view.begin(), view.end(), [](const Student* a, const Student* b) {
+        return higherPercentage(*a, *b);
+    });
     return view;
 }
 
 StudentView sortByTotalMarks(const std::vector<Student>& students) {
     StudentView view = makeView(students);
-    insertionSort(view, [](const Student& a, const Student& b) {
-        const int aTotal = totalMarks(a);
-        const int bTotal = totalMarks(b);
+    std::sort(view.begin(), view.end(), [](const Student* a, const Student* b) {
+        const int aTotal = totalMarks(*a);
+        const int bTotal = totalMarks(*b);
         if (aTotal != bTotal) return aTotal > bTotal;
-        return higherPercentage(a, b);
+        return higherPercentage(*a, *b);
     });
     return view;
 }
@@ -102,8 +107,16 @@ std::vector<RankedStudent> rankList(const std::vector<Student>& students) {
     StudentView sorted = sortByPercentage(students);
     std::vector<RankedStudent> result;
     result.reserve(sorted.size());
+    // Standard competition ranking: equal percentage -> equal rank.
+    // Total and roll are deterministic display tie-breakers only.
+    // Example: 80%, 80%, 80%, 75% => 1, 1, 1, 4.
+    std::size_t rank = 0;
     for (std::size_t i = 0; i < sorted.size(); ++i) {
-        result.push_back({sorted[i], i + 1});
+        if (i == 0 || totalMarks(*sorted[i]) * static_cast<int>(sorted[i - 1]->marks().size()) !=
+                          totalMarks(*sorted[i - 1]) * static_cast<int>(sorted[i]->marks().size())) {
+            rank = i + 1;
+        }
+        result.push_back({sorted[i], rank});
     }
     return result;
 }
