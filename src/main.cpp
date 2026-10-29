@@ -186,7 +186,8 @@ void showStudentReport(const StudentManagement& records, int roll, AcademicProce
     }
 }
 
-void showClassReport(const StudentManagement& records, AcademicProcessing::GradeScale scale) {
+void showClassReport(const StudentManagement& records, const AcademicGroups& groups,
+                     AcademicProcessing::GradeScale scale) {
     const auto& students = records.allStudents();
     const auto average = AcademicProcessing::classAverage(students);
     if (!average) {
@@ -213,24 +214,26 @@ void showClassReport(const StudentManagement& records, AcademicProcessing::Grade
     std::cout << "Performance bands: Excellent " << excellent
               << ", Good " << good << ", Average " << averageCount
               << ", Needs Improvement " << needsImprovement << "\n";
-    bool mixedSubjectCounts = false;
-    for (const Student& student : students) {
-        if (student.marks().size() != students.front().marks().size()) {
-            mixedSubjectCounts = true;
-            break;
+    const auto unassigned = AcademicProcessing::unassignedSubjectRecords(students, groups);
+    if (unassigned) {
+        std::cout << "Subject comparison excludes " << unassigned
+                  << " unassigned/inconsistent record(s). Assign each record to a "
+                     "verified academic group before comparing subject marks.\n";
+    }
+    const auto subjects = AcademicProcessing::groupedSubjectResults(students, groups);
+    if (subjects.empty()) {
+        std::cout << "No verified subject comparisons: no students have valid group assignments.\n";
+    }
+    std::string currentGroup;
+    for (const GroupSubjectResult& subject : subjects) {
+        if (currentGroup != subject.groupId) {
+            currentGroup = subject.groupId;
+            std::cout << "\nGroup " << currentGroup << " (comparable subject codes)\n";
         }
-    }
-    if (mixedSubjectCounts) {
-        std::cout << "Note: Students have different numbers of subjects. "
-                     "Each subject average includes only records with that position; "
-                     "enter subjects in the same order for valid comparisons.\n";
-    }
-    for (const SubjectResult& subject : AcademicProcessing::subjectResults(students)) {
-        std::cout << "Subject " << subject.number << " (" << subject.students
-                  << (subject.students == 1 ? " student" : " students")
-                  << "): average " << std::fixed << std::setprecision(2)
-                  << subject.average << ", lowest " << subject.lowest
-                  << ", highest " << subject.highest << "\n";
+        std::cout << "  " << subject.subjectCode << " - " << subject.subjectName
+                  << " (" << subject.students << " students): average "
+                  << std::fixed << std::setprecision(2) << subject.average
+                  << ", lowest " << subject.lowest << ", highest " << subject.highest << "\n";
     }
 }
 
@@ -461,7 +464,7 @@ int main() {
             continue;
         }
         if (*choice == 17) {
-            showClassReport(records, gradeScale);
+            showClassReport(records, groups, gradeScale);
             continue;
         }
         if (*choice == 16) {
