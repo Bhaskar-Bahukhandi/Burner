@@ -19,9 +19,12 @@ struct RankedStudent {
 };
 
 const Student* linearSearch(const std::vector<Student>& students, int rollNumber);
+// Requires roll-sorted input (StudentManagement::allStudents guarantees it); O(log n).
 const Student* binarySearch(const std::vector<Student>& students, int rollNumber);
 
 StudentView sortByRollNumber(const std::vector<Student>& students);
+// O(n^2) insertion sort retained for the course demonstration, not production search.
+StudentView insertionSortByRollNumber(const std::vector<Student>& students);
 StudentView sortByPercentage(const std::vector<Student>& students);
 StudentView sortByTotalMarks(const std::vector<Student>& students);
 
