@@ -1,7 +1,9 @@
 #include "AcademicProcessing.h"
 #include "RecordAlgorithms.h"
+#include "AcademicGroups.h"
 
 #include <algorithm>
+#include <map>
 
 namespace AcademicProcessing {
 
@@ -84,6 +86,48 @@ std::vector<SubjectResult> subjectResults(const std::vector<Student>& students) 
 const Student* topStudent(const std::vector<Student>& students) {
     auto ranked = RecordAlgorithms::sortByPercentage(students);
     return ranked.empty() ? nullptr : ranked.front();
+}
+
+
+std::vector<GroupSubjectResult> groupedSubjectResults(
+    const std::vector<Student>& students, const AcademicGroups& groups) {
+    // Position is meaningful only within a validated academic group's
+    // subject definition. Never aggregate position 1 across unrelated groups.
+    std::map<std::string, std::vector<GroupSubjectResult>> byGroup;
+    for (const Student& student : students) {
+        const AcademicGroup* group = groups.groupFor(student);
+        if (!group) continue; // Unassigned records have no verifiable subject ID.
+        auto& subjects = byGroup[group->id];
+        if (subjects.empty()) {
+            for (std::size_t i = 0; i < group->subjects.size(); ++i) {
+                const auto& subject = group->subjects[i];
+                subjects.push_back({group->id, subject.code, subject.name, i + 1,
+                                    0, 0.0, 100, 0});
+            }
+        }
+        for (std::size_t i = 0; i < subjects.size(); ++i) {
+            GroupSubjectResult& result = subjects[i];
+            const int mark = student.marks()[i];
+            result.average += mark;
+            ++result.students;
+            result.lowest = std::min(result.lowest, mark);
+            result.highest = std::max(result.highest, mark);
+        }
+    }
+    std::vector<GroupSubjectResult> result;
+    for (auto& entry : byGroup) {
+        for (auto& subject : entry.second) {
+            subject.average /= static_cast<double>(subject.students);
+            result.push_back(subject);
+        }
+    }
+    return result;
+}
+
+std::size_t unassignedSubjectRecords(
+    const std::vector<Student>& students, const AcademicGroups& groups) {
+    return static_cast<std::size_t>(std::count_if(students.begin(), students.end(),
+        [&groups](const Student& student) { return !groups.groupFor(student); }));
 }
 
 }  // namespace AcademicProcessing
