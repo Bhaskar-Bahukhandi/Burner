@@ -62,22 +62,35 @@ std::optional<double> classAverage(const std::vector<Student>& students) {
     return sum / static_cast<double>(students.size());
 }
 
-std::vector<SubjectResult> subjectResults(const std::vector<Student>& students) {
+std::optional<std::vector<SubjectResult>> groupSubjectResults(
+    const StudentManagement& records, const AcademicGroups& groups,
+    const std::string& groupId) {
+    const AcademicGroup* group = groups.findGroup(groupId);
+    if (!group || !groups.consistentWith(records)) return std::nullopt;
+
     std::vector<SubjectResult> result;
-    for (const Student& student : students) {
-        const auto& marks = student.marks();
-        for (std::size_t i = 0; i < marks.size(); ++i) {
-            if (i == result.size()) result.push_back({i + 1, 0, 0.0, 100, 0});
-            SubjectResult& subject = result[i];
-            subject.average += marks[i]; // Sum first, divide once after all records.
+    result.reserve(group->subjects.size());
+    for (const SubjectDefinition& subject : group->subjects)
+        result.push_back({subject.code, subject.name, 0, 0.0, 100, 0});
+
+    std::size_t members = 0;
+    for (const Student& student : records.allStudents()) {
+        const AcademicGroup* assigned = groups.groupFor(student);
+        if (!assigned || assigned->id != groupId) continue;
+        if (student.marks().size() != result.size()) return std::nullopt;
+        ++members;
+        for (std::size_t index = 0; index < result.size(); ++index) {
+            SubjectResult& subject = result[index];
+            const int mark = student.marks()[index];
+            subject.average += mark;
             ++subject.students;
-            subject.lowest = std::min(subject.lowest, marks[i]);
-            subject.highest = std::max(subject.highest, marks[i]);
+            subject.lowest = std::min(subject.lowest, mark);
+            subject.highest = std::max(subject.highest, mark);
         }
     }
-    for (SubjectResult& subject : result) {
+    if (members == 0) return std::vector<SubjectResult>{};
+    for (SubjectResult& subject : result)
         subject.average /= static_cast<double>(subject.students);
-    }
     return result;
 }
 

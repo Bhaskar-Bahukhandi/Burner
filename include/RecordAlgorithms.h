@@ -19,6 +19,8 @@ struct RankedStudent {
 };
 
 const Student* linearSearch(const std::vector<Student>& students, int rollNumber);
+// Binary search requires input sorted by roll. StudentManagement guarantees it.
+// For arbitrary vectors, call sortByRollNumber first (or sort the records).
 const Student* binarySearch(const std::vector<Student>& students, int rollNumber);
 
 StudentView sortByRollNumber(const std::vector<Student>& students);

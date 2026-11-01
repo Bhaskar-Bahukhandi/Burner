@@ -12,17 +12,31 @@ StudentView makeView(const std::vector<Student>& students) {
     return view;
 }
 
+// Merge sort keeps classroom-sized datasets fast even when they grow.
+// A separate buffer avoids copying the Student records themselves.
 template <typename ComesFirst>
-void insertionSort(StudentView& view, ComesFirst comesFirst) {
-    for (std::size_t i = 1; i < view.size(); ++i) {
-        const Student* current = view[i];
-        std::size_t j = i;
-        while (j > 0 && comesFirst(*current, *view[j - 1])) {
-            view[j] = view[j - 1];
-            --j;
-        }
-        view[j] = current;
+void mergeRange(StudentView& view, StudentView& buffer,
+                std::size_t left, std::size_t right, ComesFirst comesFirst) {
+    if (right - left < 2) return;
+    const std::size_t middle = left + (right - left) / 2;
+    mergeRange(view, buffer, left, middle, comesFirst);
+    mergeRange(view, buffer, middle, right, comesFirst);
+
+    std::size_t i = left, j = middle, k = left;
+    while (i < middle && j < right) {
+        // Take the left element when equal, making the sort stable.
+        if (comesFirst(*view[j], *view[i])) buffer[k++] = view[j++];
+        else buffer[k++] = view[i++];
     }
+    while (i < middle) buffer[k++] = view[i++];
+    while (j < right) buffer[k++] = view[j++];
+    for (std::size_t n = left; n < right; ++n) view[n] = buffer[n];
+}
+
+template <typename ComesFirst>
+void mergeSort(StudentView& view, ComesFirst comesFirst) {
+    StudentView buffer(view.size());
+    mergeRange(view, buffer, 0, view.size(), comesFirst);
 }
 
 // Exact comparison, avoiding rounding when students have different
@@ -60,22 +74,19 @@ const Student* linearSearch(const std::vector<Student>& students, int rollNumber
 
 StudentView sortByRollNumber(const std::vector<Student>& students) {
     StudentView view = makeView(students);
-    insertionSort(view, [](const Student& a, const Student& b) {
+    mergeSort(view, [](const Student& a, const Student& b) {
         return a.rollNumber() < b.rollNumber();
     });
     return view;
 }
 
 const Student* binarySearch(const std::vector<Student>& students, int rollNumber) {
-    // Binary search requires ordered data. Prepare a sorted view first.
-    StudentView sorted = sortByRollNumber(students);
-    std::size_t low = 0;
-    std::size_t high = sorted.size();
-
+    // The records are already sorted by StudentManagement; no re-sort here.
+    std::size_t low = 0, high = students.size();
     while (low < high) {
         const std::size_t mid = low + (high - low) / 2;
-        if (sorted[mid]->rollNumber() == rollNumber) return sorted[mid];
-        if (sorted[mid]->rollNumber() < rollNumber) low = mid + 1;
+        if (students[mid].rollNumber() == rollNumber) return &students[mid];
+        if (students[mid].rollNumber() < rollNumber) low = mid + 1;
         else high = mid;
     }
     return nullptr;
@@ -83,13 +94,13 @@ const Student* binarySearch(const std::vector<Student>& students, int rollNumber
 
 StudentView sortByPercentage(const std::vector<Student>& students) {
     StudentView view = makeView(students);
-    insertionSort(view, higherPercentage);
+    mergeSort(view, higherPercentage);
     return view;
 }
 
 StudentView sortByTotalMarks(const std::vector<Student>& students) {
     StudentView view = makeView(students);
-    insertionSort(view, [](const Student& a, const Student& b) {
+    mergeSort(view, [](const Student& a, const Student& b) {
         const int aTotal = totalMarks(a);
         const int bTotal = totalMarks(b);
         if (aTotal != bTotal) return aTotal > bTotal;
@@ -102,8 +113,13 @@ std::vector<RankedStudent> rankList(const std::vector<Student>& students) {
     StudentView sorted = sortByPercentage(students);
     std::vector<RankedStudent> result;
     result.reserve(sorted.size());
+    std::size_t rank = 0;
     for (std::size_t i = 0; i < sorted.size(); ++i) {
-        result.push_back({sorted[i], i + 1});
+        if (i == 0 || totalMarks(*sorted[i]) * static_cast<int>(sorted[i - 1]->marks().size()) !=
+            totalMarks(*sorted[i - 1]) * static_cast<int>(sorted[i]->marks().size())) {
+            rank = i + 1;
+        }
+        result.push_back({sorted[i], rank});
     }
     return result;
 }

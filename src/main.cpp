@@ -1,6 +1,8 @@
 #include "AcademicProcessing.h"
+#include "AcademicGroupStorage.h"
+#include "GroupConsole.h"
 #include "ChangeHistory.h"
-#include "RecordStorage.h"
+#include "SqliteStorage.h"
 #include "RecordAlgorithms.h"
 #include "RequestQueue.h"
 #include "StudentManagement.h"
@@ -107,7 +109,7 @@ void showRankList(const std::vector<Student>& students, AcademicProcessing::Grad
         std::cout << "No student records yet.\n";
         return;
     }
-    std::cout << "Rank list (percentage, then total marks, then roll number):\n";
+    std::cout << "Rank list (equal percentages share a rank; ties listed by total, then roll):\n";
     for (const auto& entry : ranked) {
         std::cout << "Rank " << entry.rank << ": ";
         showSummary(*entry.student, scale);
@@ -184,19 +186,19 @@ void showStudentReport(const StudentManagement& records, int roll, AcademicProce
     }
 }
 
-void showClassReport(const StudentManagement& records, AcademicProcessing::GradeScale scale) {
+void showClassReport(const StudentManagement& records, const AcademicGroups& groups, AcademicProcessing::GradeScale scale) {
     const auto& students = records.allStudents();
     const auto average = AcademicProcessing::classAverage(students);
     if (!average) {
         std::cout << "No student records yet.\n";
         return;
     }
-    std::cout << "Class size: " << students.size() << "\n"
-              << "Average percentage: " << std::fixed << std::setprecision(2)
+    std::cout << "Total records: " << students.size() << "\n"
+              << "All-record average (different groups are not peers): " << std::fixed << std::setprecision(2)
               << *average << "%\n";
     const Student* topper = AcademicProcessing::topStudent(students);
     if (topper) {
-        std::cout << "Top performer: ";
+        std::cout << "Highest overall percentage (groups may differ): ";
         showSummary(*topper, scale);
     }
     std::size_t excellent = 0, good = 0, averageCount = 0, needsImprovement = 0;
@@ -211,31 +213,85 @@ void showClassReport(const StudentManagement& records, AcademicProcessing::Grade
     std::cout << "Performance bands: Excellent " << excellent
               << ", Good " << good << ", Average " << averageCount
               << ", Needs Improvement " << needsImprovement << "\n";
-    bool mixedSubjectCounts = false;
-    for (const Student& student : students) {
-        if (student.marks().size() != students.front().marks().size()) {
-            mixedSubjectCounts = true;
-            break;
+    std::cout << "\nNamed subject averages are calculated only within assigned academic groups.\n";
+    bool reported = false;
+    for (const auto& entry : groups.groups()) {
+        const auto results = AcademicProcessing::groupSubjectResults(records, groups, entry.first);
+        if (!results) {
+            std::cout << "Group data is inconsistent; cannot calculate subject results.\n";
+            return;
+        }
+        if (results->empty()) continue; // Group exists, but has no assigned students.
+        reported = true;
+        std::cout << "Group " << entry.first << " (" << entry.second.branch
+                  << ", semester " << entry.second.semester
+                  << ", cohort " << entry.second.cohort << "):\n";
+        for (const SubjectResult& subject : *results) {
+            std::cout << "  " << subject.code << " - " << subject.name
+                      << " (" << subject.students << " students): average "
+                      << std::fixed << std::setprecision(2) << subject.average
+                      << ", lowest " << subject.lowest
+                      << ", highest " << subject.highest << "\n";
         }
     }
-    if (mixedSubjectCounts) {
-        std::cout << "Note: Students have different numbers of subjects. "
-                     "Each subject average includes only records with that position; "
-                     "enter subjects in the same order for valid comparisons.\n";
-    }
-    for (const SubjectResult& subject : AcademicProcessing::subjectResults(students)) {
-        std::cout << "Subject " << subject.number << " (" << subject.students
-                  << (subject.students == 1 ? " student" : " students")
-                  << "): average " << std::fixed << std::setprecision(2)
-                  << subject.average << ", lowest " << subject.lowest
-                  << ", highest " << subject.highest << "\n";
-    }
+    if (!reported) std::cout << "No assigned group members; subject comparison unavailable.\n";
+    std::cout << "Unassigned students are excluded from subject averages.\n";
 }
 
 bool confirmation(const std::string& prompt) {
     std::cout << prompt << " Type YES to confirm: ";
     std::string answer;
     return std::getline(std::cin, answer) && answer == "YES";
+}
+
+// Do not change records in a way that makes saved group assignments invalid.
+// Work on copies first; unsuccessful or blocked operations leave undo/queue intact.
+template <typename Operation>
+bool guardedChange(StudentManagement& records, ChangeHistory& history,
+                   const AcademicGroups& groups, Operation operation) {
+    StudentManagement trialRecords = records;
+    ChangeHistory trialHistory = history;
+    if (!operation(trialRecords, trialHistory)) return false;
+    if (!groups.consistentWith(trialRecords)) {
+        std::cout << "Blocked: this change would invalidate an academic group assignment. "
+                     "Unassign the student first.\n";
+        return false;
+    }
+    records = std::move(trialRecords);
+    history = std::move(trialHistory);
+    return true;
+}
+
+// Process on copies. When a queued request conflicts with group metadata,
+// retain it for later instead of consuming it or changing records.
+bool processSafely(StudentManagement& records, ChangeHistory& history,
+                   RequestQueue& queue, const AcademicGroups& groups,
+                   bool& dirty) {
+    if (queue.size() == 0) { std::cout << "No pending requests.\n"; return true; }
+    StudentManagement trialRecords = records;
+    ChangeHistory trialHistory = history;
+    RequestQueue trialQueue = queue;
+    const auto result = trialQueue.processNext(trialRecords, trialHistory);
+    if (result && result->applied && !groups.consistentWith(trialRecords)) {
+        std::cout << "Request blocked by an academic group assignment. "
+                     "It is still queued; unassign the student before processing.\n";
+        return false;
+    }
+    if (result && result->applied) {
+        records = std::move(trialRecords);
+        history = std::move(trialHistory);
+        dirty = true;
+    }
+    queue = std::move(trialQueue);
+    reportResult(result);
+    return true;
+}
+
+// SQLite is the only live persistence backend. A missing database is a fresh
+// project only when there is no legacy data to import explicitly.
+bool loadBoth(const std::string& databaseFile, StudentManagement& records,
+              AcademicGroups& groups, std::string& error) {
+    return SqliteStorage::load(databaseFile, records, groups, error);
 }
 
 void showMenu() {
@@ -256,10 +312,17 @@ void showMenu() {
               << "14. Undo last successful change\n"
               << "15. Process all pending requests\n"
               << "16. Student academic report\n"
-              << "17. Class and subject report\n"
-              << "18. Save student records\n"
-              << "19. Reload saved records\n"
+              << "17. Class summary and group subject report\n"
+              << "18. Save pending changes to SQLite\n"
+              << "19. Reload from SQLite\n"
               << "20. Change grading scheme / show criteria\n"
+              << "21. Create academic group\n"
+              << "22. Assign student to group\n"
+              << "23. Unassign student from group\n"
+              << "24. List academic groups and subjects\n"
+              << "25. Simulate mark and comparable group rank\n"
+              << "26. View group-based academic insights\n"
+              << "27. Plan a hypothetical percentage or grade goal\n"
               << "0. Save and exit\n";
 }
 }  // namespace
@@ -268,52 +331,52 @@ int main() {
     StudentManagement records;
     ChangeHistory history;
     RequestQueue queue;
-    const std::string filename = "students.txt";
+    AcademicGroups groups;
+    const std::string filename = "edutrack.db";
     bool dirty = false;
     auto gradeScale = AcademicProcessing::GradeScale::GeuReference;
     namespace fs = std::filesystem;
     std::error_code fileError;
-    const bool hasData = fs::exists(filename, fileError);
+    const bool sqlExists = fs::exists(filename, fileError);
     if (fileError) {
-        std::cerr << "Cannot inspect saved records: " << fileError.message() << "\n";
+        std::cerr << "Cannot inspect SQLite file: " << fileError.message() << "\n";
         return 1;
     }
-    // Check each recovery file separately so an error from the first check
-    // cannot be overwritten by the second filesystem call.
-    for (const char* extension : {".bak", ".tmp"}) {
-        fileError.clear();
-        const std::string recoveryFile = filename + extension;
-        const bool present = fs::exists(recoveryFile, fileError);
-        if (fileError) {
-            std::cerr << "Cannot inspect " << recoveryFile << ": "
-                      << fileError.message() << "\n";
-            return 1;
+    if (!sqlExists) {
+        // Never overwrite or automatically migrate legacy records.
+        for (const char* old : {"students.txt", "academic_groups.txt"}) {
+            fileError.clear();
+            if (fs::exists(old, fileError) || fileError) {
+                std::cerr << "Legacy data exists (or cannot be inspected): " << old
+                          << ". Back up your files and run the migration tool "
+                             "before starting the SQLite console.\n";
+                return 1;
+            }
         }
-        if (present) {
-            std::cerr << "Recovery file " << recoveryFile
-                      << " exists. Check the saved records before restarting.\n";
-            return 1;
-        }
-    }
-    if (hasData) {
         std::string error;
-        if (!RecordStorage::load(filename, records, error)) {
-            std::cerr << "Cannot load saved records: " << error
-                      << ". The file was not changed.\n";
+        if (!SqliteStorage::save(filename, records, groups, error)) {
+            std::cerr << "Cannot initialize SQLite database: " << error << "\n";
             return 1;
         }
-        std::cout << "Loaded " << records.allStudents().size()
-                  << " saved student records.\n";
+        std::cout << "Created empty edutrack.db SQLite database.\n";
     } else {
-        std::cout << "No saved file found. Starting with empty records.\n";
+        std::string error;
+        if (!SqliteStorage::load(filename, records, groups, error)) {
+            std::cerr << "Cannot load SQLite database: " << error << "\n";
+            return 1;
+        }
     }
+    StudentManagement persistedRecords = records;
+    AcademicGroups persistedGroups = groups;
+    std::cout << "Loaded " << records.allStudents().size() << " students and "
+              << groups.groups().size() << " academic groups from SQLite.\n";
     std::cout << "Grading: " << AcademicProcessing::scaleName(gradeScale) << "\n";
-    std::cout << "Record changes are saved on exit or by option 18. "
-                 "Undo history and queued requests are not saved.\n";
+    std::cout << "Changes commit to SQLite inside a transaction when saved. "
+                 "Undo and queued requests exist only in memory.\n";
 
     while (true) {
         showMenu();
-        auto choice = readNumber("Choice: ", 0, 20);
+        auto choice = readNumber("Choice: ", 0, 27);
         if (!choice || *choice == 0) {
             if (queue.size() && choice &&
                 !confirmation("Pending requests will be discarded without processing.")) {
@@ -321,17 +384,36 @@ int main() {
             }
             if (dirty) {
                 std::string error;
-                if (!RecordStorage::save(filename, records, error)) {
+                if (!SqliteStorage::commit(filename, persistedRecords, persistedGroups, records, groups, error)) {
                     std::cerr << "Save failed: " << error << "\n";
                     if (!choice) return 1;  // Input ended; cannot offer recovery.
                     std::cerr << "Records remain in memory. Resolve the issue and retry.\n";
                     continue;
                 }
                 dirty = false;
-                std::cout << "Saved student records.\n";
+                persistedRecords = records;
+                std::cout << "Saved student records to SQLite.\n";
                 if (!error.empty()) std::cout << "Note: " << error << "\n";
             }
             break;
+        }
+        if (*choice >= 21 && *choice <= 27) {
+            // Metadata saves immediately. First flush pending marks to avoid
+            // persisting assignments for students absent from students.txt.
+            if ((*choice == 21 || *choice == 22 || *choice == 23) && dirty) {
+                std::string error;
+                if (!SqliteStorage::commit(filename, persistedRecords, persistedGroups, records, groups, error)) {
+                    std::cout << "Save students first: " << error << "\n";
+                    continue;
+                }
+                dirty = false;
+                persistedRecords = records;
+                if (!error.empty()) std::cout << "Note: " << error << "\n";
+            }
+            if (!GroupConsole::handle(*choice, records, groups, filename,
+                                      gradeScale, std::cin, std::cout)) break;
+            persistedGroups = groups;
+            continue;
         }
         if (*choice == 20) {
             std::cout << "Grading options:\n"
@@ -353,8 +435,9 @@ int main() {
         }
         if (*choice == 18) {
             std::string error;
-            if (RecordStorage::save(filename, records, error)) {
+            if (SqliteStorage::commit(filename, persistedRecords, persistedGroups, records, groups, error)) {
                 dirty = false;
+                persistedRecords = records;
                 std::cout << "Saved " << records.allStudents().size()
                           << " student records.\n";
                 if (!error.empty()) std::cout << "Note: " << error << "\n";
@@ -368,11 +451,13 @@ int main() {
                 continue;
             }
             std::string error;
-            if (RecordStorage::load(filename, records, error)) {
+            if (loadBoth(filename, records, groups, error)) {
                 history.clear();
                 queue.clear();
                 dirty = false;
-                std::cout << "Records reloaded. Undo history and queue cleared.\n";
+                persistedRecords = records;
+                persistedGroups = groups;
+                std::cout << "Records and group metadata reloaded. Undo history and queue cleared.\n";
             } else {
                 std::cout << "Reload failed: " << error
                           << ". Current records, history and queue were kept.\n";
@@ -380,7 +465,7 @@ int main() {
             continue;
         }
         if (*choice == 17) {
-            showClassReport(records, gradeScale);
+            showClassReport(records, groups, gradeScale);
             continue;
         }
         if (*choice == 16) {
@@ -415,9 +500,7 @@ int main() {
             continue;
         }
         if (*choice == 12) {
-            const auto result = queue.processNext(records, history);
-            if (result && result->applied) dirty = true;
-            reportResult(result);
+            processSafely(records, history, queue, groups, dirty);
             continue;
         }
         if (*choice == 13) {
@@ -425,10 +508,11 @@ int main() {
             continue;
         }
         if (*choice == 14) {
-            if (history.undo(records)) {
+            if (guardedChange(records, history, groups,
+                  [](StudentManagement& r, ChangeHistory& h) {return h.undo(r);})) {
                 dirty = true;
                 std::cout << "Last change undone.\n";
-            } else std::cout << "Nothing to undo.\n";
+            } else std::cout << "Nothing undone (empty history or group conflict).\n";
             continue;
         }
         if (*choice == 15) {
@@ -436,9 +520,7 @@ int main() {
                 std::cout << "No pending requests.\n";
             } else {
                 while (queue.size() != 0) {
-                    const auto result = queue.processNext(records, history);
-                    if (result && result->applied) dirty = true;
-                    reportResult(result);
+                    if (!processSafely(records, history, queue, groups, dirty)) break;
                 }
             }
             continue;
@@ -458,7 +540,10 @@ int main() {
             if (rank) std::cout << "Rank: " << *rank << "\n";
             else std::cout << "Student not found.\n";
         } else if (*choice == 5) {
-            if (history.deleteStudent(records, *roll)) {
+            if (guardedChange(records, history, groups,
+                    [roll](StudentManagement& r, ChangeHistory& h) {
+                        return h.deleteStudent(r, *roll);
+                    })) {
                 dirty = true;
                 std::cout << "Student deleted.\n";
             } else std::cout << "Student not found.\n";
@@ -475,8 +560,11 @@ int main() {
 
             auto student = enterStudent(*roll);
             if (!student) break;
-            const bool saved = (*choice == 1) ? history.addStudent(records, *student)
-                                               : history.updateStudent(records, *roll, *student);
+            const bool saved = guardedChange(records, history, groups,
+                [choice, roll, &student](StudentManagement& r, ChangeHistory& h) {
+                    return *choice == 1 ? h.addStudent(r, *student)
+                                        : h.updateStudent(r, *roll, *student);
+                });
             if (saved) dirty = true;
             std::cout << (saved ? (*choice == 1 ? "Student added.\n" : "Student updated.\n")
                                  : "Could not save record.\n");
@@ -486,12 +574,13 @@ int main() {
     // An EOF during a form also exits the loop. Save those edits as well.
     if (dirty) {
         std::string error;
-        if (!RecordStorage::save(filename, records, error)) {
+        if (!SqliteStorage::commit(filename, persistedRecords, persistedGroups, records, groups, error)) {
             std::cerr << "Save failed on exit: " << error
                       << ". Unsaved records remain only in this session.\n";
             return 1;
         }
-        std::cout << "Saved student records.\n";
+        persistedRecords = records;
+        std::cout << "Saved student records to SQLite.\n";
         if (!error.empty()) std::cout << "Note: " << error << "\n";
     }
     if (queue.size() != 0) {

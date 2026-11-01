@@ -1,112 +1,127 @@
 # EduTrack
 
-EduTrack keeps student records, marks and academic reports in a C++ application. It has a console menu and an optional Windows desktop interface. The project uses classes, vectors, searching, sorting, stacks, queues and file handling for the TCS-302 / TCS-307 Phase-II PBL.
+EduTrack is a C++17 desktop project for managing student marks and reviewing academic progress. It combines student-record operations with searching, sorting, a stack for undo, a FIFO request queue, and an SQLite database. Its academic features work with explicitly defined groups and subjects; they do not replace official university results.
+
+**Intended user:** a faculty member or academic coordinator working on one computer. The program does not currently have student logins or separate user roles.
 
 ## Features
 
-- Add, find, update and delete student details and marks.
-- Search by roll number, sort by marks or percentage, and display ranks.
-- Undo successful changes using a stack and process queued requests in order.
-- Display student and class reports, including subject-wise averages.
-- Save records in `students.txt` and reload them after restarting.
-- Change between two **illustrative** grading schemes without changing saved marks.
+- Add, edit, delete, search, sort and view student records.
+- Queue record changes in FIFO order and undo eligible edits during the current session.
+- Define an academic group with a branch, semester, cohort and ordered subject codes; assign matching students.
+- Produce group-specific subject reports, a simple bar chart and descriptive peer comparisons. The student table can scroll horizontally when space is limited.
+- Calculate hypothetical rank changes, target percentages and example mark allocations without changing saved marks. Optional subject ceilings use the same labelled marks editor.
+- Store records, marks, subject definitions and assignments in SQLite with transactions and foreign-key checks.
+- Import legacy text records into a new database; verify, back up and restore databases using separate utilities.
 
-## Team modules
+Grades and suggested improvements are **illustrative**, not an official B.Tech grading or prediction system. Comparisons of subjects only make sense within a verified group.
 
-| Member | Work | Code |
-| --- | --- | --- |
-| Mohammad Rayyan Farooqui (lead) | Student model, record management, console menu | `Student.*`, `StudentManagement.*`, `main.cpp` |
-| Shiv Tyagi | Searching, sorting, ranking | `RecordAlgorithms.*` |
-| Bhaskar Bahukhandi | Stack, undo and request queue | `ChangeHistory.*`, `RequestQueue.*` |
-| Aditya Kukrety | Academic reports and file handling | `AcademicProcessing.*`, `RecordStorage.*` |
+## Project layout
 
-The optional `gui/WindowsGUI.cpp` uses the same classes as the console version. The module split follows our Phase-II proposal; everyone should understand the part they are presenting.
-
-## Build
-
-C++17 and its standard library are required. No external GUI packages or database are used.
-
-**Windows PowerShell — console:**
-
-```powershell
-g++ -std=c++17 -Wall -Wextra -pedantic -Iinclude (Get-ChildItem src -Filter *.cpp | ForEach-Object FullName) -o EduTrackConsole.exe
-.\EduTrackConsole.exe
+```text
+EduTrack/
+  gui/                 One Windows GUI and its three form headers
+  include/             Shared C++ headers
+  src/                 Student records, DSA, calculations and console
+  database/            SQLite storage and backup implementation
+  tools/               Legacy importer and database maintenance CLI
+  tests/               Five non-interactive regression programs + Windows GUI smoke test
+  docs/                PBL presentation and Windows testing guides
+  build_windows.ps1    PowerShell build helper
+  run_windows.ps1      Run with the correct UCRT64 runtime DLLs
+  README.md
+  .gitignore
 ```
 
-**Windows PowerShell — desktop GUI (MinGW-w64):**
+`gui/WindowsGUI.cpp` is the desktop entry point. `src/main.cpp` is the optional console entry point. Build them separately. Both use `edutrack.db`, not the old text files. The legacy text readers are kept only for importing existing records.
 
-```powershell
-g++ -std=c++17 -Wall -Wextra -pedantic -municode -mwindows -Iinclude .\gui\WindowsGUI.cpp (Get-ChildItem src -Filter *.cpp | Where-Object Name -ne 'main.cpp' | ForEach-Object FullName) -lcomctl32 -o EduTrackGUI.exe
-.\EduTrackGUI.exe
-```
+## Build on Windows
 
-For Linux/macOS console builds:
+Install [MSYS2](https://www.msys2.org/), open its **UCRT64** terminal, and install the matching C++ compiler and SQLite development package:
 
 ```sh
-g++ -std=c++17 -Wall -Wextra -pedantic -Iinclude src/*.cpp -o edutrack
+pacman -Syu
+pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-sqlite3
+```
+
+Reopen UCRT64 if the update asks you to. From **PowerShell**, in the extracted project folder:
+
+```powershell
+.\build_windows.ps1 -Target GUI
+.\run_windows.ps1 -Target GUI
+```
+
+The run helper starts programs from the EduTrack folder with the matching UCRT64 DLL directory. This avoids a missing-DLL error (0xC0000135) and keeps `edutrack.db` in one predictable location. It restores the previous PowerShell working directory and PATH afterwards. To build the GUI, console, importer, maintenance utility and tests together:
+
+```powershell
+.\build_windows.ps1 -Target All
+```
+
+The build script expects UCRT64 under `C:\msys64\ucrt64`. If yours is elsewhere, pass `-Ucrt64 'D:\msys64\ucrt64'` with the correct path. If scripts are blocked, `Set-ExecutionPolicy -Scope Process Bypass` changes policy for the current PowerShell process only.
+
+If the compiler reports `sqlite3.h: No such file or directory`, install the UCRT64 SQLite development package rather than downloading unrelated DLL files. The build script checks for the header and import library before compiling. The same UCRT64 runtime must be available when the application launches.
+
+## Build the console on Linux
+
+Install a C++17 compiler and the SQLite development headers/library, then run from the project folder:
+
+```sh
+g++ -std=c++17 -Wall -Wextra -pedantic -Iinclude src/*.cpp database/SqliteStorage.cpp -lsqlite3 -o edutrack
 ./edutrack
 ```
 
-Run the app from the same working folder each time to find `students.txt`. Close the console before using the GUI, and vice versa, so they cannot overwrite one another's saved changes.
+The GUI is Windows-specific and is not built by this command.
 
-## Using the Windows GUI
+## Run the tests
 
-The window has four sections, chosen from the left sidebar or the **View** menu:
+On Windows:
 
-- **Students:** add, update, delete and find student records. The search box lets you choose **Linear** or **Binary** search; these are algorithms taught in Data Structures. Use **Sort by** to view class rank, roll-number order or total marks. Click a table row to fill the form.
-- **Request Queue:** use the same student form to queue add/update/delete requests, view the waiting list, and process requests in FIFO order. Only successfully applied changes can be undone.
-- **Reports:** show one student's marks/grade/rank or the class and subject averages. Reports are refreshed on request after records change.
-- **Grading:** view both grading schemes and their limitations. Selecting a different scheme changes displayed grades, not marks.
+```powershell
+.\build_windows.ps1 -Target Tests
+.\run_windows.ps1 -Target Tests
+```
 
-The **File** menu contains Save, Reload and Exit. The **Edit** menu contains Undo, Clear form and Find. Help explains the controls. The window can be minimized, maximized and resized (within a practical minimum size). Keyboard shortcuts: **Ctrl+S** Save, **Ctrl+Z** Undo, **Ctrl+F** Find, **F1** Help.
+The non-interactive tests cover validation boundaries, searching and tie ranking, academic-group calculations, undo/FIFO behavior, database changes and migration, and verified backup/restore. The sixth Windows-only smoke test opens and cancels each editor, checking that its actual child controls were created (including subject limits). Run the tests with **fictional test records**. Even a successful smoke test does not substitute for manual visual and functional testing on Windows.
 
-Records are stored locally. There is no login or online data transfer. Queue and undo history stay in memory; only student records are saved. Back up `students.txt` before deliberately testing corrupt-file recovery.
+## First run and old records
 
+The application creates a new `edutrack.db` only when neither an existing database nor legacy records are present. To import old files, close EduTrack, make copies of `students.txt` and `academic_groups.txt`, then build the importer with:
 
-## Grading criteria
+```powershell
+.\build_windows.ps1 -Target Importer
+.\run_windows.ps1 -Target Importer -Arguments @('students.txt', 'academic_groups.txt', 'edutrack.db')
+```
 
-The default display uses a **GEU-published distance-learning reference**, not a verified grading regulation for our B.Tech batch. The university reference also discusses moderated grade boundaries. Here, the individual student's *average of equally weighted subject marks* is used to illustrate a letter grade; an actual university course grade or SGPA may be determined differently.
+The importer verifies the data in a separate `.importing` database before publishing to a **new** filename. It refuses an existing destination and keeps both source files unchanged. If migration fails, inspect the error and any leftover `.importing` file before retrying.
 
-| Percentage | Illustrative grade | Points | Published rating |
-| --- | --- | --- | --- |
-| Above 85 | O | 10 | Outstanding |
-| 75 to 85 | A+ | 9 | Excellent |
-| 65 to below 75 | A | 8 | Very Good |
-| 55 to below 65 | B+ | 7 | Good |
-| 50 to below 55 | B | 6 | Above Average |
-| 45 to below 50 | C | 5 | Average |
-| 40 to below 45 | P | 4 | Pass |
-| Below 40 | F | 0 | Fail |
+## Backup and recovery
 
-The source leaves **exactly 85%** unspecified (`>85` is O, while the printed A+ range ends at 84). EduTrack treats 85 as A+ *temporarily*, rather than claiming that GEU has published a definitive rule for that boundary. The continuous boundaries between other published whole-number bands are also an application convention; results shown here are examples, not official university records.
+```powershell
+.\build_windows.ps1 -Target Maintenance
+.\run_windows.ps1 -Target Maintenance -Arguments @('verify', 'edutrack.db')
+.\run_windows.ps1 -Target Maintenance -Arguments @('backup', 'edutrack.db', 'backup.db')
+.\run_windows.ps1 -Target Maintenance -Arguments @('restore', 'backup.db', 'restored.db')
+.\run_windows.ps1 -Target Maintenance -Arguments @('verify', 'restored.db')
+```
 
-**Source:** [Graphic Era (Deemed to be University), Programme Project Report, distance-learning grading table](https://files.geu.ac.in/odl/CIQA%202024/ppr.pdf). Confirm the current B.Tech-specific grading rules with your mentor before final submission.
+Backup uses SQLite's online backup API, including committed WAL changes. Restore creates a **new database file**, never overwrites the active one. Close all EduTrack processes and preserve the old database and its SQLite sidecar files before manually activating a restored copy.
 
-The original EduTrack grading scheme is still selectable: A 90+, B 80+, C 70+, D 60+, F below 60. This is a project-only fallback; it has no grade points. Use the dropdown in the GUI or menu option **20** in the console to switch schemes. The choice is for the current session; the selected scheme does not alter student marks.
+## Data rules and limitations
 
-Performance bands are **project-defined**, not official GEU ratings:
+- Each student has a unique positive roll number, a branch and semester, and 1–20 integer marks in the range 0–100.
+- An academic group specifies the branch, semester and **ordered** subject definitions. Assigned students must match this definition.
+- Searching uses roll-ordered records; ranking uses competition ranks (for example 1, 1, 3). Group reports do not mix unrelated departments' subject positions.
+- Edits use SQLite transactions and stale-record checks. Queue and undo history exist only until reload/exit.
+- The desktop currently stages in-memory copies for some safety checks. This program is designed for a local academic workload, not unlimited simultaneous users.
+- SQLite files are **not encrypted by default**. There is no password/login system or multi-user server. Use OS account protection and disk encryption for private records.
+- Do not run multiple editing instances simultaneously, and do not use real students' private information in a public demo.
 
-| Scheme | Excellent | Good | Average | Needs Improvement |
-| --- | --- | --- | --- | --- |
-| GEU reference grouping | 75+ | 55 to below 75 | 45 to below 55 | Below 45 |
-| Original project grouping | 85+ | 70 to below 85 | 50 to below 70 | Below 50 |
+For 134 manual acceptance checks, see [Full test plan](docs/QUALITY_TESTS.md). For the project explanation, team module allocation, algorithms and a rehearsal walkthrough, see [Project and demo guide](docs/PROJECT_AND_DEMO.md). Before submission, complete the [Windows verification checklist](docs/WINDOWS_CHECKLIST.md).
 
-For example, a student with `360/500 = 72%` displays **A (8 points, Very Good)** using the GEU reference, while the original project scheme displays **C**. Both examples show the project performance band **Good**.
+## Windows GUI acceptance test
 
-## Notes about subject reports and storage
+Build the GUI and the Windows dialog test with `-Target All`, then run `.\run_windows.ps1 -Target Tests` (six executables). Confirm the student, academic-group, subject-marks, and goal-limits forms display their labels, inputs, Save/Apply and Cancel buttons. Verify that Cancel does not save anything.
 
-Every subject is out of 100 and counted equally. The current data model stores subject marks by **position**, not by subject name: enter the same subjects in the same order for all students. If subject counts vary, only students with that subject position contribute to its average, and the report displays a warning. The program doesn't currently store custom subject titles.
+In a **new empty database**: use the Dashboard shortcuts to create a group and add a student; enter subject marks; assign the student to the matching group. In Students, verify the table headings and horizontal scrollbar at narrow window widths. Test Edit, Delete confirmation, Undo, FIFO, comparable Reports, Simulator, Goal Planner, and persistence after restart. The actions requiring a student should initially be disabled. Follow `docs/WINDOWS_CHECKLIST.md` for deeper tests.
 
-Records are saved to `students.txt`. Temporary `students.txt.tmp` and `students.txt.bak` files can be created while saving. If these remain after an interrupted save, inspect them before restarting and do not discard a backup without checking it. Loading rejects invalid records rather than silently replacing the current list. Undo history and queued requests are not saved after exit.
-
-## Current checks and limitations
-
-The console application builds using C++17 on GCC and Clang and its data functions can be tested independently. The Win32 GUI source must also be compiled and tested on Windows/MinGW before we use it for the final demonstration. This project is meant for small student datasets; insertion sort and full undo snapshots are not designed for large institutional records.
-
-## Before the Phase-II demo
-
-- Confirm grading rules and subject order with the mentor; the GEU reference is not a verified B.Tech grading policy.
-- Enter two example students, test sorting, both searches, undo, queue and reports.
-- Save, close and reopen; verify the same marks and records load.
-- Test the GUI on the Windows demonstration laptop and keep the console version as a fallback.
-- Replace the placeholder repository/commit entries and old progress figures in the Phase-II report with accurate information.
+The Win32 interface must be compiled and exercised on an actual Windows machine before calling these visual and interactive changes verified.
