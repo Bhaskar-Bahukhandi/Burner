@@ -31,38 +31,37 @@ bool StudentManagement::isValid(const Student& student) {
 }
 
 const Student* StudentManagement::findStudent(int rollNumber) const {
-    for (const Student& student : students_) {
-        if (student.rollNumber() == rollNumber) return &student;
-    }
-    return nullptr;
+    const auto position = std::lower_bound(students_.begin(), students_.end(), rollNumber,
+        [](const Student& student, int roll) { return student.rollNumber() < roll; });
+    return position != students_.end() && position->rollNumber() == rollNumber
+        ? &*position : nullptr;
 }
 
 bool StudentManagement::addStudent(const Student& student) {
-    if (!isValid(student) || findStudent(student.rollNumber())) return false;
-    students_.push_back(student);
+    if (!isValid(student)) return false;
+    auto position = std::lower_bound(students_.begin(), students_.end(), student.rollNumber(),
+        [](const Student& existing, int roll) { return existing.rollNumber() < roll; });
+    if (position != students_.end() && position->rollNumber() == student.rollNumber())
+        return false;
+    students_.insert(position, student); // O(n) insertion; lookups remain O(log n).
     return true;
 }
 
 bool StudentManagement::updateStudent(int rollNumber, const Student& replacement) {
     if (rollNumber != replacement.rollNumber() || !isValid(replacement)) return false;
-
-    for (Student& student : students_) {
-        if (student.rollNumber() == rollNumber) {
-            student = replacement;
-            return true;
-        }
-    }
-    return false;
+    auto position = std::lower_bound(students_.begin(), students_.end(), rollNumber,
+        [](const Student& existing, int roll) { return existing.rollNumber() < roll; });
+    if (position == students_.end() || position->rollNumber() != rollNumber) return false;
+    *position = replacement; // Roll number stays the same; order remains sorted.
+    return true;
 }
 
 bool StudentManagement::deleteStudent(int rollNumber) {
-    for (auto it = students_.begin(); it != students_.end(); ++it) {
-        if (it->rollNumber() == rollNumber) {
-            students_.erase(it);
-            return true;
-        }
-    }
-    return false;
+    auto position = std::lower_bound(students_.begin(), students_.end(), rollNumber,
+        [](const Student& existing, int roll) { return existing.rollNumber() < roll; });
+    if (position == students_.end() || position->rollNumber() != rollNumber) return false;
+    students_.erase(position);
+    return true;
 }
 
 const std::vector<Student>& StudentManagement::allStudents() const {

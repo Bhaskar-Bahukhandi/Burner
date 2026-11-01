@@ -4,9 +4,11 @@
 #include "StudentManagement.h"
 
 #include <cstddef>
-#include <stack>
+#include <optional>
+#include <vector>
 
-// Keeps the state before each successful change so it can be restored.
+// Stores one inverse action per successful change, not a whole class snapshot.
+// History is session-only. The database still handles permanent records.
 class ChangeHistory {
 public:
     bool addStudent(StudentManagement& records, const Student& student);
@@ -19,7 +21,13 @@ public:
     void clear();
 
 private:
-    std::stack<StudentManagement> previousStates_;
+    enum class UndoKind { RemoveAdded, RestoreUpdated, ReinsertDeleted };
+    struct UndoEntry {
+        UndoKind kind;
+        int rollNumber;
+        std::optional<Student> original;
+    };
+    std::vector<UndoEntry> entries_;
 };
 
 #endif

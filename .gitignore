@@ -1,12 +1,26 @@
-# Compiled files and local data
+# Local builds and generated files
 *.exe
 *.o
 *.obj
 *.out
 edutrack
-students.txt
-students.txt.tmp
-students.txt.bak
-
-# Editor settings
+edutrack-migrate
+edutrack-db
+build/
 .vscode/
+
+# Personal student records and legacy imports
+students.txt*
+academic_groups.txt*
+
+# SQLite databases, backups and SQLite sidecar files
+*.db
+*.db-*
+*.db.*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.pending
+*.importing
+_build/

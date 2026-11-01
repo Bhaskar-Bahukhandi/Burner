@@ -1,0 +1,32 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main, 'release/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-sqlite3
+      - name: Build application and tests
+        shell: pwsh
+        run: .\build_windows.ps1 -Target All
+      - name: Run non-interactive tests
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+          foreach ($test in @('EduTrackTests.exe', 'EduTrackSqliteTests.exe',
+                               'EduTrackWorkflowTests.exe', 'EduTrackMaintenanceTests.exe')) {
+            & (Join-Path $PWD $test)
+            if ($LASTEXITCODE -ne 0) { throw "$test failed with exit code $LASTEXITCODE" }
+          }

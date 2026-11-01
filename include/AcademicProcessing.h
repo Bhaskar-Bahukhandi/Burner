@@ -2,6 +2,7 @@
 #define ACADEMIC_PROCESSING_H
 
 #include "Student.h"
+#include "AcademicGroups.h"
 
 #include <cstddef>
 #include <optional>
@@ -9,7 +10,8 @@
 #include <vector>
 
 struct SubjectResult {
-    std::size_t number;
+    std::string code;
+    std::string name;
     std::size_t students;
     double average;
     int lowest;
@@ -33,7 +35,11 @@ std::string grade(double percentage, GradeScale scale = GradeScale::GeuReference
 std::string scaleName(GradeScale scale);
 std::string category(double percentage, GradeScale scale = GradeScale::GeuReference);
 std::optional<double> classAverage(const std::vector<Student>& students);
-std::vector<SubjectResult> subjectResults(const std::vector<Student>& students);
+// Only compare marks within the same explicitly assigned academic group.
+// Missing/invalid group or inconsistent assignments => nullopt.
+std::optional<std::vector<SubjectResult>> groupSubjectResults(
+    const StudentManagement& records, const AcademicGroups& groups,
+    const std::string& groupId);
 const Student* topStudent(const std::vector<Student>& students);
 
 }  // namespace AcademicProcessing
