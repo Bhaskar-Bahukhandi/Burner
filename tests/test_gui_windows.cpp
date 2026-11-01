@@ -15,10 +15,13 @@
 #include <vector>
 
 namespace {
-bool inspectAndClose(const wchar_t* className, const std::vector<int>& ids) {
+bool inspectAndClose(HWND owner, const wchar_t* className, const std::vector<int>& ids) {
     for (int attempt = 0; attempt < 250; ++attempt) {
-        const HWND hwnd = FindWindowW(className, nullptr);
-        if (hwnd && IsWindowVisible(hwnd)) {
+        // Only inspect this test's dialog; another EduTrack instance may be open.
+        HWND hwnd = nullptr;
+        while ((hwnd = FindWindowExW(nullptr, hwnd, className, nullptr)) != nullptr) {
+            if (GetWindow(hwnd, GW_OWNER) != owner || !IsWindowVisible(hwnd))
+                continue;
             bool controlsReady = true;
             for (int id : ids) {
                 const HWND child = GetDlgItem(hwnd, id);
@@ -47,7 +50,7 @@ int main() {
     if (!owner) return 2;
     bool groupControls = false;
     std::thread groupCheck([&] {
-        groupControls = inspectAndClose(L"EduTrackGroupForm",
+        groupControls = inspectAndClose(owner, L"EduTrackGroupForm",
                              {1501, 1502, 1503, 1504, 1505, IDOK, IDCANCEL});
     });
     auto group = GroupFormDialog::show(owner, instance, 96);
@@ -56,7 +59,7 @@ int main() {
 
     bool studentControls = false;
     std::thread studentCheck([&] {
-        studentControls = inspectAndClose(L"EduTrackStudentForm",
+        studentControls = inspectAndClose(owner, L"EduTrackStudentForm",
                                {1101, 1102, 1103, 1104, 1105, IDOK, IDCANCEL});
     });
     auto student = StudentFormDialog::show(owner, instance, 96, std::nullopt, false);
@@ -65,7 +68,7 @@ int main() {
 
     bool marksControls = false;
     std::thread marksCheck([&] {
-        marksControls = inspectAndClose(L"EduTrackSubjectMarks",
+        marksControls = inspectAndClose(owner, L"EduTrackSubjectMarks",
                              {1601, 1602, 1700, 1704, IDOK, IDCANCEL});
     });
     auto marks = SubjectMarksDialog::show(owner, instance, 96, {60, 70, 80, 90, 100}, nullptr);
@@ -75,7 +78,7 @@ int main() {
     // The limits editor reuses the exact same labelled controls.
     bool limitsControls = false;
     std::thread limitsCheck([&] {
-        limitsControls = inspectAndClose(L"EduTrackSubjectMarks",
+        limitsControls = inspectAndClose(owner, L"EduTrackSubjectMarks",
                               {1601, 1602, 1700, 1704, IDOK, IDCANCEL});
     });
     auto limits = SubjectMarksDialog::show(owner, instance, 96,
