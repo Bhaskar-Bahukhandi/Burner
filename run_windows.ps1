@@ -51,12 +51,12 @@ try {
         'Maintenance' { Invoke-EduTrack 'edutrack-db.exe' 'Maintenance' $Arguments }
         'Tests' {
             if ($Arguments.Count -gt 0) { throw 'Do not pass -Arguments with -Target Tests.' }
-            foreach ($Name in @('EduTrackTests.exe', 'EduTrackSqliteTests.exe',
+            foreach ($Name in @('EduTrackTests.exe', 'EduTrackValidationTests.exe', 'EduTrackSqliteTests.exe',
                                 'EduTrackWorkflowTests.exe', 'EduTrackMaintenanceTests.exe',
                                 'EduTrackGuiTests.exe')) {
                 Invoke-EduTrack $Name 'Tests' @()
             }
-            Write-Host 'All five tests completed successfully.' -ForegroundColor Green
+            Write-Host 'All six tests completed successfully.' -ForegroundColor Green
         }
     }
 } finally {
