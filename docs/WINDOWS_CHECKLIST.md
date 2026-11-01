@@ -23,7 +23,7 @@ Run in PowerShell from the project root:
 Record whether every build succeeded and keep the first complete compiler error if a build fails.
 
 - [ ] GUI, console, importer, maintenance utility and test programs compile without errors.
-- [ ] All five test executables exit successfully (including the Windows dialog smoke test).
+- [ ] All six test executables exit successfully (including the Windows dialog smoke test).
 - [ ] `EduTrack.exe` opens and uses the intended `edutrack.db` file.
 - [ ] Starting with an empty directory creates a new database only when no legacy data is waiting to be imported.
 
@@ -89,7 +89,7 @@ Reviewed by: _________________________________________________
 
 ## Modal dialogs and first-run UX
 
-- [ ] `run_windows.ps1 -Target Tests` runs all five tests, including dialog creation; all return exit code 0.
+- [ ] `run_windows.ps1 -Target Tests` runs all six tests, including dialog creation; all return exit code 0.
 - [ ] An empty dashboard explains the first two actions and its Add student / Create academic group shortcuts open populated dialogs.
 - [ ] Create academic group shows Group ID, Branch, Semester, Cohort, ordered subjects and Save/Cancel.
 - [ ] New student shows roll, name, branch, semester and the Edit subject marks button; nested subject inputs show and accept 0 and 100.
