@@ -83,7 +83,7 @@ void checkDeterministicRecordOperations() {
     }));
     const auto ranks = RecordAlgorithms::rankList(records.allStudents());
     assert(ranks.size() == 750);
-    assert(std::all_of(ranks.begin(), ranks.end(), [](const RankedStudent& item) {
+    assert(std::all_of(ranks.begin(), ranks.end(), [](const RecordAlgorithms::RankedStudent& item) {
         return item.rank == 1;
     }));
 }
