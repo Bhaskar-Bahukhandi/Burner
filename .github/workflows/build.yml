@@ -19,14 +19,15 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-sqlite3
       - name: Build application and tests
-        shell: pwsh
-        run: .\build_windows.ps1 -Target All
-      - name: Run non-interactive tests
-        shell: pwsh
+        shell: msys2 {0}
         run: |
-          $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
-          foreach ($test in @('EduTrackTests.exe', 'EduTrackSqliteTests.exe',
-                               'EduTrackWorkflowTests.exe', 'EduTrackMaintenanceTests.exe')) {
-            & (Join-Path $PWD $test)
-            if ($LASTEXITCODE -ne 0) { throw "$test failed with exit code $LASTEXITCODE" }
-          }
+          # MSYS2's location on GitHub runners need not be C:\msys64.
+          UCRT_ROOT="$(cygpath -w /ucrt64)"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File build_windows.ps1 -Target All -Ucrt64 "$UCRT_ROOT"
+      - name: Run non-interactive tests
+        shell: msys2 {0}
+        run: |
+          ./EduTrackTests.exe
+          ./EduTrackSqliteTests.exe
+          ./EduTrackWorkflowTests.exe
+          ./EduTrackMaintenanceTests.exe
