@@ -26,8 +26,9 @@ if (-not (Test-Path -LiteralPath $SQLiteHeader -PathType Leaf) -or
 $env:PATH = (Join-Path $Ucrt64 'bin') + ';' + $env:PATH
 $Include = '-I' + (Join-Path $Root 'include')
 $SQLiteInclude = '-I' + (Join-Path $Ucrt64 'include')
+$GuiInclude = '-I' + (Join-Path $Root 'gui')
 $SQLiteLib = '-L' + (Join-Path $Ucrt64 'lib')
-$Std = @('-std=c++17', '-Wall', '-Wextra', '-pedantic', $Include, $SQLiteInclude, $SQLiteLib)
+$Std = @('-std=c++17', '-Wall', '-Wextra', '-pedantic', $Include, $GuiInclude, $SQLiteInclude, $SQLiteLib)
 $Src = @(Get-ChildItem -LiteralPath (Join-Path $Root 'src') -Filter '*.cpp' -File | ForEach-Object { $_.FullName })
 $Base = Join-Path $Root 'database\SqliteStorage.cpp'
 $Support = @('Student.cpp', 'StudentManagement.cpp', 'AcademicGroups.cpp', 'RecordStorage.cpp', 'AcademicGroupStorage.cpp') |
