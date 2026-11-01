@@ -73,7 +73,7 @@ if ($Target -eq 'Tests' -or $Target -eq 'All') {
     $GuiCore = @('Student.cpp', 'StudentManagement.cpp', 'AcademicGroups.cpp') |
         ForEach-Object { Join-Path $Root ('src\' + $_) }
     Build 'Windows dialog smoke tests' (@((Join-Path $Root 'tests\test_gui_windows.cpp')) + $GuiCore) `
-        @() @('-lcomctl32') 'EduTrackGuiTests.exe'
+        @('-DUNICODE', '-D_UNICODE') @('-lcomctl32') 'EduTrackGuiTests.exe'
     Write-Host 'Run all five tests with the matching DLLs: .\run_windows.ps1 -Target Tests'
 }
 
