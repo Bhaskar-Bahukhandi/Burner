@@ -25,7 +25,7 @@ EduTrack/
   src/                 Student records, DSA, calculations and console
   database/            SQLite storage and backup implementation
   tools/               Legacy importer and database maintenance CLI
-  tests/               Four portable regression programs + Windows GUI smoke test
+  tests/               Five non-interactive regression programs + Windows GUI smoke test
   docs/                PBL presentation and Windows testing guides
   build_windows.ps1    PowerShell build helper
   run_windows.ps1      Run with the correct UCRT64 runtime DLLs
@@ -81,7 +81,7 @@ On Windows:
 .\run_windows.ps1 -Target Tests
 ```
 
-The portable tests cover searching and tie ranking, academic-group calculations, undo/FIFO behavior, database changes and migration, and verified backup/restore. The fifth Windows-only smoke test opens and cancels each editor, checking that its actual child controls were created (including subject limits). Run the tests with **fictional test records**. Even a successful smoke test does not substitute for manual visual and functional testing on Windows.
+The non-interactive tests cover validation boundaries, searching and tie ranking, academic-group calculations, undo/FIFO behavior, database changes and migration, and verified backup/restore. The sixth Windows-only smoke test opens and cancels each editor, checking that its actual child controls were created (including subject limits). Run the tests with **fictional test records**. Even a successful smoke test does not substitute for manual visual and functional testing on Windows.
 
 ## First run and old records
 
@@ -116,11 +116,11 @@ Backup uses SQLite's online backup API, including committed WAL changes. Restore
 - SQLite files are **not encrypted by default**. There is no password/login system or multi-user server. Use OS account protection and disk encryption for private records.
 - Do not run multiple editing instances simultaneously, and do not use real students' private information in a public demo.
 
-For the project explanation, team module allocation, algorithms and a rehearsal walkthrough, see [Project and demo guide](docs/PROJECT_AND_DEMO.md). Before submission, complete the [Windows verification checklist](docs/WINDOWS_CHECKLIST.md).
+For 134 manual acceptance checks, see [Full test plan](docs/QUALITY_TESTS.md). For the project explanation, team module allocation, algorithms and a rehearsal walkthrough, see [Project and demo guide](docs/PROJECT_AND_DEMO.md). Before submission, complete the [Windows verification checklist](docs/WINDOWS_CHECKLIST.md).
 
 ## Windows GUI acceptance test
 
-Build the GUI and the Windows dialog test with `-Target All`, then run `.\run_windows.ps1 -Target Tests`. Confirm the student, academic-group, subject-marks, and goal-limits forms display their labels, inputs, Save/Apply and Cancel buttons. Verify that Cancel does not save anything.
+Build the GUI and the Windows dialog test with `-Target All`, then run `.\run_windows.ps1 -Target Tests` (six executables). Confirm the student, academic-group, subject-marks, and goal-limits forms display their labels, inputs, Save/Apply and Cancel buttons. Verify that Cancel does not save anything.
 
 In a **new empty database**: use the Dashboard shortcuts to create a group and add a student; enter subject marks; assign the student to the matching group. In Students, verify the table headings and horizontal scrollbar at narrow window widths. Test Edit, Delete confirmation, Undo, FIFO, comparable Reports, Simulator, Goal Planner, and persistence after restart. The actions requiring a student should initially be disabled. Follow `docs/WINDOWS_CHECKLIST.md` for deeper tests.
 
