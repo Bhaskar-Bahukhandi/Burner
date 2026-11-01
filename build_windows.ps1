@@ -22,8 +22,10 @@ if (-not (Test-Path -LiteralPath $SQLiteHeader -PathType Leaf) -or
     throw "SQLite3 headers/import library are missing from $Ucrt64. Open the MSYS2 UCRT64 terminal and run: pacman -S --needed mingw-w64-ucrt-x86_64-sqlite3"
 }
 
-# Use the same UCRT64 runtime DLLs as the compiler and SQLite library.
-$env:PATH = (Join-Path $Ucrt64 'bin') + ';' + $env:PATH
+# Use matching UCRT64 DLLs while compiling, then restore the caller's PATH.
+$PreviousPath = $env:PATH
+$env:PATH = (Join-Path $Ucrt64 'bin') + ';' + $PreviousPath
+try {
 $Include = '-I' + (Join-Path $Root 'include')
 $SQLiteInclude = '-I' + (Join-Path $Ucrt64 'include')
 $GuiInclude = '-I' + (Join-Path $Root 'gui')
@@ -79,4 +81,7 @@ if ($Target -eq 'Tests' -or $Target -eq 'All') {
 
 if ($Target -eq 'GUI' -or $Target -eq 'All') {
     Write-Host 'Launch the desktop with: .\run_windows.ps1 -Target GUI'
+}
+} finally {
+    $env:PATH = $PreviousPath
 }
