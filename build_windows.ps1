@@ -65,6 +65,8 @@ if ($Target -eq 'Tests' -or $Target -eq 'All') {
               'ImprovementGoalPlanner.cpp') |
         ForEach-Object { Join-Path $Root ('src\' + $_) }
     Build 'Core regression tests' (@((Join-Path $Root 'tests\test_core.cpp')) + $Core) @() @() 'EduTrackTests.exe'
+    Build 'Boundary and validation regression tests' (@((Join-Path $Root 'tests\test_validation.cpp')) +
+        $Core) @() @() 'EduTrackValidationTests.exe'
     Build 'SQLite integration tests' (@((Join-Path $Root 'tests\test_sqlite.cpp'), $Base) + $Support) @() @() 'EduTrackSqliteTests.exe'
     $Workflow = @('Student.cpp', 'StudentManagement.cpp', 'ChangeHistory.cpp',
                   'RequestQueue.cpp', 'GuardedRecordWorkflow.cpp', 'AcademicGroups.cpp') |
@@ -76,7 +78,7 @@ if ($Target -eq 'Tests' -or $Target -eq 'All') {
         ForEach-Object { Join-Path $Root ('src\' + $_) }
     Build 'Windows dialog smoke tests' (@((Join-Path $Root 'tests\test_gui_windows.cpp')) + $GuiCore) `
         @('-DUNICODE', '-D_UNICODE') @('-lcomctl32', '-lgdi32') 'EduTrackGuiTests.exe'
-    Write-Host 'Run all five tests with the matching DLLs: .\run_windows.ps1 -Target Tests'
+    Write-Host 'Run all six tests with the matching DLLs: .\run_windows.ps1 -Target Tests'
 }
 
 if ($Target -eq 'GUI' -or $Target -eq 'All') {
