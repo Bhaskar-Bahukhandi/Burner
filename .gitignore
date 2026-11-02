@@ -1,4 +1,6 @@
 # Local builds and generated files
+*.dll
+dist/
 *.exe
 *.o
 *.obj
