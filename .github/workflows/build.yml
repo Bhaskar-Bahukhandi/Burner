@@ -18,6 +18,18 @@ jobs:
           install: >-
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-sqlite3
+      - name: Check PowerShell script syntax
+        shell: pwsh
+        run: |
+          foreach ($script in @('build_windows.ps1', 'run_windows.ps1')) {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Join-Path $PWD $script), [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -gt 0) {
+              throw ($parseErrors | Out-String)
+            }
+          }
       - name: Build application and tests
         shell: msys2 {0}
         run: |
