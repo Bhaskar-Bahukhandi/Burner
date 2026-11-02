@@ -28,6 +28,7 @@ EduTrack/
   tests/               Five non-interactive regression programs + Windows GUI smoke test
   docs/                PBL presentation and Windows testing guides
   build_windows.ps1    PowerShell build helper
+  package_windows.ps1  Package EXE and required runtime DLLs for Windows
   run_windows.ps1      Run with the correct UCRT64 runtime DLLs
   README.md
   .gitignore
@@ -50,6 +51,19 @@ Reopen UCRT64 if the update asks you to. From **PowerShell**, in the extracted p
 .\build_windows.ps1 -Target GUI
 .\run_windows.ps1 -Target GUI
 ```
+
+**Double-clicking the EXE:** A compiler-generated `EduTrack.exe` in the source folder may not work on its own: SQLite and the GCC runtime DLLs are installed under UCRT64. To make a standalone Windows folder after compiling, run:
+
+```powershell
+.\build_windows.ps1 -Target GUI
+.\package_windows.ps1
+```
+
+Then open `dist\EduTrack\EduTrack.exe` in File Explorer. Keep the DLLs alongside the EXE. The packaging script collects the matching DLLs from your installed UCRT64 toolchain, recursively checks imported dependencies, and refuses to overwrite an existing destination. It does not copy or change your `edutrack.db` records. For another package, use a fresh `-Destination` folder.
+
+A ready-to-run Windows ZIP is also published in the GitHub Actions artifacts after successful Windows builds. Download the artifact, extract **all** files into the same folder, and double-click its `EduTrack.exe` without needing PowerShell or MSYS2 installed on that computer. Do not confuse the source-code ZIP with this executable package.
+
+If you have existing student records, close EduTrack, back up `edutrack.db` and any `-wal`/`-shm` sidecar files, and move a verified copy into the packaged folder only when intentionally moving to a new location. The default packaged app starts with its own new database and does not silently migrate records from your source folder.
 
 The run helper starts programs from the EduTrack folder with the matching UCRT64 DLL directory. This avoids a missing-DLL error (0xC0000135) and keeps `edutrack.db` in one predictable location. It restores the previous PowerShell working directory and PATH afterwards. To build the GUI, console, importer, maintenance utility and tests together:
 
