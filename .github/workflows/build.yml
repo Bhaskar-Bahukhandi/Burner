@@ -21,7 +21,7 @@ jobs:
       - name: Check PowerShell script syntax
         shell: pwsh
         run: |
-          foreach ($script in @('build_windows.ps1', 'run_windows.ps1')) {
+          foreach ($script in @('build_windows.ps1', 'run_windows.ps1', 'package_windows.ps1')) {
             $tokens = $null
             $parseErrors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile(
@@ -44,6 +44,21 @@ jobs:
           ./EduTrackSqliteTests.exe
           ./EduTrackWorkflowTests.exe
           ./EduTrackMaintenanceTests.exe
+      - name: Package Windows app with runtime DLLs
+        shell: msys2 {0}
+        run: |
+          UCRT_ROOT="$(cygpath -w /ucrt64)"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File package_windows.ps1 -Ucrt64 "$UCRT_ROOT"
+          test -f dist/EduTrack/EduTrack.exe
+          test -f dist/EduTrack/libsqlite3-0.dll
+      - name: Upload portable Windows application
+        uses: actions/upload-artifact@v4
+        with:
+          name: EduTrack-Windows-portable
+          path: dist/EduTrack/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 9
       - name: Package clean source and test materials
         uses: actions/upload-artifact@v4
         with:
@@ -53,6 +68,7 @@ jobs:
             .gitignore
             README.md
             build_windows.ps1
+            package_windows.ps1
             run_windows.ps1
             database/
             docs/
