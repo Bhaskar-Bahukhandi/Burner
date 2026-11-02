@@ -33,6 +33,21 @@ try {
         if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
             throw "$Executable not found. Build it using: .\build_windows.ps1 -Target $BuildTarget"
         }
+        if ($BuildTarget -eq 'GUI') {
+            # A Windows GUI program can return control to PowerShell before it exits.
+            # Start-Process reports the new process without relying on $LASTEXITCODE.
+            $StartOptions = @{
+                FilePath = $Path
+                WorkingDirectory = $Root
+                PassThru = $true
+            }
+            if ($ProgramArgs.Count -gt 0) {
+                $StartOptions.ArgumentList = $ProgramArgs
+            }
+            $Process = Start-Process @StartOptions
+            Write-Host "Started $Executable (PID $($Process.Id))." -ForegroundColor Green
+            return
+        }
         Write-Host "Running $Executable..."
         & $Path @ProgramArgs
         $ExitCode = $LASTEXITCODE
